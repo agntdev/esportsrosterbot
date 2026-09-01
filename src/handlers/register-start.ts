@@ -6,12 +6,25 @@ import { conflicts, logEvent, now, readTournament, type Player, type Team, write
 registerMainMenuItem({ label: "Регистрация команды", data: "register:start", order: 10 });
 
 type Draft = { name: string; captainContact: string; players: Player[] };
-type RegistrationSession = { flow?: string; draft?: Draft };
+type EditableField = "name" | "captain" | "player" | "sub";
+type RegistrationSession = {
+  flow?: string;
+  draft?: Draft;
+  editField?: EditableField;
+  editIndex?: number;
+  pendingPlayer?: Player;
+};
 const composer = new Composer<Ctx>();
 const input = { force_reply: true, input_field_placeholder: "Введите текст" } as const;
 const session = (ctx: Ctx): RegistrationSession => ctx.session as unknown as RegistrationSession;
 
-function reset(ctx: Ctx): void { session(ctx).flow = undefined; session(ctx).draft = undefined; }
+function reset(ctx: Ctx): void {
+  session(ctx).flow = undefined;
+  session(ctx).draft = undefined;
+  session(ctx).editField = undefined;
+  session(ctx).editIndex = undefined;
+  session(ctx).pendingPlayer = undefined;
+}
 function playerLabel(index: number): string { return index === 0 ? "Капитан" : `Игрок ${index + 1}`; }
 function prompt(index: number, field: "id" | "nickname" | "contact"): string {
   if (field === "contact") return "Укажите контакт капитана: @username или номер телефона.";
@@ -19,7 +32,17 @@ function prompt(index: number, field: "id" | "nickname" | "contact"): string {
 }
 function currentPlayer(draft: Draft): Player { return draft.players[draft.players.length - 1]; }
 function optionalKeyboard() { return inlineKeyboard([[inlineButton("Добавить замену", "register:sub"), inlineButton("К просмотру", "register:preview")], [inlineButton("Отмена", "menu:main")]]); }
-function previewKeyboard() { return inlineKeyboard([[inlineButton("Подтвердить", "register:confirm"), inlineButton("Редактировать", "register:restart")], [inlineButton("Отмена", "menu:main")]]); }
+function previewKeyboard() { return inlineKeyboard([[inlineButton("Подтвердить", "register:confirm"), inlineButton("Редактировать", "register:edit")], [inlineButton("Отмена", "menu:main")]]); }
+function editMenuKeyboard() {
+  return inlineKeyboard([
+    [inlineButton("Team name", "register:edit:name"), inlineButton("Captain", "register:edit:captain")],
+    [inlineButton("Player 1", "register:edit:player:0"), inlineButton("Player 2", "register:edit:player:1")],
+    [inlineButton("Player 3", "register:edit:player:2"), inlineButton("Player 4", "register:edit:player:3")],
+    [inlineButton("Player 5", "register:edit:player:4"), inlineButton("Sub 1", "register:edit:sub:0")],
+    [inlineButton("Sub 2", "register:edit:sub:1")],
+    [inlineButton("Back to preview", "register:preview")],
+  ]);
+}
 function formatApplication(team: Pick<Team, "name" | "captainContact" | "players"> | Draft): string {
   const starters = team.players.filter((player) => !player.isSubstitute);
   const subs = team.players.filter((player) => player.isSubstitute);
@@ -27,6 +50,28 @@ function formatApplication(team: Pick<Team, "name" | "captainContact" | "players
   lines.push(...starters.map((player, i) => `${i === 0 ? "Капитан" : `Игрок ${i + 1}`}: ${player.inGameId} — ${player.nickname}`));
   lines.push(subs.length ? `Замены: ${subs.map((player) => `${player.inGameId} — ${player.nickname}`).join("; ")}` : "Замены: нет");
   return lines.join("\n");
+}
+async function showPreview(ctx: Ctx): Promise<void> {
+  const draft = session(ctx).draft;
+  if (!draft || draft.players.filter((player) => !player.isSubstitute).length !== 5) {
+    await ctx.reply("Сначала заполните пять основных игроков.");
+    return;
+  }
+  session(ctx).flow = "preview";
+  session(ctx).editField = undefined;
+  session(ctx).editIndex = undefined;
+  session(ctx).pendingPlayer = undefined;
+  await ctx.reply(`Проверьте заявку:\n\n${formatApplication(draft)}`, { reply_markup: previewKeyboard() });
+}
+function editPlayer(draft: Draft, field: EditableField, index?: number): Player | undefined {
+  if (field === "captain") return draft.players[0];
+  if (field === "player" && index !== undefined) return draft.players[index];
+  if (field === "sub" && index !== undefined) return draft.players.filter((player) => player.isSubstitute)[index];
+  return undefined;
+}
+function duplicateDraftId(draft: Draft, player: Player): boolean {
+  const matches = draft.players.filter((item) => item !== player && item.inGameId.toLowerCase() === player.inGameId.toLowerCase());
+  return matches.length > 0;
 }
 function conflictDetails(data: Awaited<ReturnType<typeof readTournament>>, team: Team): string {
   const overlaps = conflicts(data, team);
@@ -69,15 +114,97 @@ async function publish(ctx: Ctx): Promise<void> {
 }
 
 composer.callbackQuery("register:start", async (ctx) => { await ctx.answerCallbackQuery(); session(ctx).flow = "team_name"; session(ctx).draft = { name: "", captainContact: "", players: [] }; await ctx.reply("Введите название команды.", { reply_markup: input }); });
-composer.callbackQuery("register:restart", async (ctx) => { await ctx.answerCallbackQuery(); session(ctx).flow = "team_name"; session(ctx).draft = { name: "", captainContact: "", players: [] }; await ctx.reply("Введите название команды.", { reply_markup: input }); });
+composer.callbackQuery(["register:edit", "register:restart"], async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!session(ctx).draft || session(ctx).flow !== "preview") {
+    await ctx.reply("Сначала откройте просмотр заявки.");
+    return;
+  }
+  await ctx.reply("Choose a field to update.", { reply_markup: editMenuKeyboard() });
+});
+composer.callbackQuery("register:edit:name", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const draft = session(ctx).draft;
+  if (!draft || session(ctx).flow !== "preview") { await ctx.reply("Сначала откройте просмотр заявки."); return; }
+  session(ctx).flow = "edit_name";
+  session(ctx).editField = "name";
+  await ctx.reply(`Введите название команды. Текущее: ${draft.name}`, { reply_markup: input });
+});
+composer.callbackQuery("register:edit:captain", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const draft = session(ctx).draft;
+  if (!draft || session(ctx).flow !== "preview") { await ctx.reply("Сначала откройте просмотр заявки."); return; }
+  session(ctx).flow = "edit_id";
+  session(ctx).editField = "captain";
+  session(ctx).editIndex = 0;
+  await ctx.reply(`Капитан — Game ID. Текущее: ${draft.players[0]?.inGameId ?? "не указано"}.`, { reply_markup: input });
+});
+composer.callbackQuery(/^register:edit:(player|sub):(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const draft = session(ctx).draft;
+  const field = ctx.match?.[1] as EditableField | undefined;
+  const index = Number(ctx.match?.[2]);
+  if (!draft || session(ctx).flow !== "preview" || !field || !Number.isInteger(index)) { await ctx.reply("Сначала откройте просмотр заявки."); return; }
+  if (field === "player" && (index < 0 || index > 4 || !draft.players[index])) { await ctx.reply("Этот игрок недоступен для изменения."); return; }
+  const subs = draft.players.filter((player) => player.isSubstitute);
+  if (field === "sub" && (index < 0 || index > 1 || (index === 1 && !subs[0]))) { await ctx.reply(index === 1 ? "Сначала добавьте первую замену." : "Эта замена недоступна для изменения."); return; }
+  let player = editPlayer(draft, field, index);
+  // Keep a new substitute out of the draft until both required fields have been
+  // saved, so backing out cannot leave an incomplete roster entry behind.
+  if (field === "sub" && !player) {
+    player = { inGameId: "", nickname: "", isSubstitute: true };
+    session(ctx).pendingPlayer = player;
+  }
+  if (!player) { await ctx.reply("Этот игрок недоступен для изменения."); return; }
+  session(ctx).flow = "edit_id";
+  session(ctx).editField = field;
+  session(ctx).editIndex = index;
+  const label = field === "sub" ? `Замена ${index + 1}` : `Игрок ${index + 1}`;
+  await ctx.reply(`${label} — Game ID. Текущее: ${player.inGameId || "не указано"}.`, { reply_markup: input });
+});
 composer.callbackQuery("register:sub", async (ctx) => { await ctx.answerCallbackQuery(); const draft = session(ctx).draft; if (!draft || session(ctx).flow !== "sub_choice") { await ctx.reply("Сначала заполните основную заявку."); return; } if (draft.players.filter((p) => p.isSubstitute).length >= 2) { await ctx.reply("Можно добавить не больше двух замен. Перейдите к просмотру.", { reply_markup: optionalKeyboard() }); return; } draft.players.push({ inGameId: "", nickname: "", isSubstitute: true }); session(ctx).flow = "sub_id"; await ctx.reply("Замена — Game ID.", { reply_markup: input }); });
-composer.callbackQuery("register:preview", async (ctx) => { await ctx.answerCallbackQuery(); const draft = session(ctx).draft; if (!draft || draft.players.filter((p) => !p.isSubstitute).length !== 5) { await ctx.reply("Сначала заполните пять основных игроков."); return; } session(ctx).flow = "preview"; await ctx.reply(`Проверьте заявку:\n\n${formatApplication(draft)}`, { reply_markup: previewKeyboard() }); });
+composer.callbackQuery("register:preview", async (ctx) => { await ctx.answerCallbackQuery(); await showPreview(ctx); });
 composer.callbackQuery("register:confirm", async (ctx) => { await ctx.answerCallbackQuery(); if (session(ctx).flow !== "preview") { await ctx.reply("Сначала откройте просмотр заявки."); return; } await publish(ctx); });
 
 composer.on("message:text", async (ctx, next) => {
   const s = session(ctx); const flow = s.flow; if (!flow || ["price", "match_link", "edit_player"].includes(flow)) return next();
   const value = ctx.message.text.trim(); const draft = s.draft;
   if (!draft) { reset(ctx); await ctx.reply("Срок заполнения анкеты истёк. Начните регистрацию заново."); return; }
+  if (flow === "edit_name") {
+    if (!value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
+    draft.name = value.slice(0, 128);
+    await showPreview(ctx);
+    return;
+  }
+  if (flow === "edit_id") {
+    const player = editPlayer(draft, s.editField ?? "player", s.editIndex) ?? s.pendingPlayer;
+    if (!player || !value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
+    player.inGameId = value.slice(0, 128);
+    if (duplicateDraftId(draft, player)) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: input }); return; }
+    s.flow = "edit_nickname";
+    const label = s.editField === "captain" ? "Капитан" : s.editField === "sub" ? `Замена ${(s.editIndex ?? 0) + 1}` : `Игрок ${(s.editIndex ?? 0) + 1}`;
+    await ctx.reply(`${label} — игровой никнейм. Текущее: ${player.nickname || "не указано"}.`, { reply_markup: input });
+    return;
+  }
+  if (flow === "edit_nickname") {
+    const player = editPlayer(draft, s.editField ?? "player", s.editIndex) ?? s.pendingPlayer;
+    if (!player || !value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
+    player.nickname = value.slice(0, 128);
+    if (s.editField === "captain") {
+      s.flow = "edit_contact";
+      await ctx.reply(`Укажите контакт капитана. Текущий: ${draft.captainContact || "не указано"}.`, { reply_markup: input });
+      return;
+    }
+    if (s.editField === "sub" && !draft.players.includes(player)) draft.players.push(player);
+    await showPreview(ctx);
+    return;
+  }
+  if (flow === "edit_contact") {
+    if (!value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
+    draft.captainContact = value.slice(0, 128);
+    await showPreview(ctx);
+    return;
+  }
   if (flow === "team_name") { const fallback = ctx.from?.username?.trim() || ctx.from?.first_name?.trim() || "Команда"; draft.name = value || `${fallback}-${now()}`; draft.players.push({ inGameId: "", nickname: "", isSubstitute: false }); s.flow = "starter_id"; await ctx.reply(prompt(0, "id"), { reply_markup: input }); return; }
   if (!value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
   if (flow === "starter_id" || flow === "sub_id") { currentPlayer(draft).inGameId = value.slice(0, 128); s.flow = flow === "starter_id" ? "starter_nickname" : "sub_nickname"; await ctx.reply(prompt(draft.players.length - 1, "nickname"), { reply_markup: input }); return; }
