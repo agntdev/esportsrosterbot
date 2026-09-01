@@ -22,7 +22,7 @@ export type Team = {
 };
 export type NameSubject = "team" | "player";
 export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
-export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "ready" | "in_progress" | "completed" | "active" };
+export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "ready" | "in_progress" | "completed" | "active"; bracketSize?: number; bracketRounds?: number };
 export type MatchStatus = "scheduled" | "in_progress" | "completed";
 /** A pairing is stored once, rather than duplicated on each team. */
 export type MatchTable = {
@@ -41,6 +41,9 @@ export type MatchTable = {
   status: MatchStatus;
   result?: string;
   winnerTeamId?: string;
+  /** Position in a single-elimination bracket. Old fixtures are round one. */
+  bracketRound?: number;
+  bracketSlot?: number;
 };
 export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created" | "conflict_resolved"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string; resolution?: "team1" | "team2" | "both"; relatedTeamIds?: string[] };
 export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[]; nextMatchNumber: number; matches: Record<string, MatchTable>; matchIds: string[] };
@@ -230,7 +233,10 @@ export function teams(data: TournamentData): Team[] {
 
 /** The currently published tournament, if the organizer has assembled one. */
 export function activeTournament(data: TournamentData): Tournament | undefined {
-  return [...data.tournamentIds].reverse().map((id) => data.tournaments[id]).find((tournament) => tournament && (tournament.status === "ready" || tournament.status === "in_progress" || tournament.status === "active"));
+  // The completed bracket remains the public tournament table and must not be
+  // mistaken for an absent tournament (which would allow an accidental second
+  // composition after a one-team/bye bracket finishes).
+  return [...data.tournamentIds].reverse().map((id) => data.tournaments[id]).find((tournament) => tournament && (tournament.status === "ready" || tournament.status === "in_progress" || tournament.status === "active" || tournament.status === "completed"));
 }
 
 /** Entry criteria are deliberately centralized so preview and confirmation agree. */
@@ -246,7 +252,9 @@ export function eligibleTeams(data: TournamentData): Team[] {
 
 export function createTournament(data: TournamentData, selected: Team[], adminId: string): Tournament {
   const id = `tr${data.nextTournamentNumber++}`;
-  const tournament: Tournament = { id, teamIds: selected.map((team) => team.id), createdAt: now(), createdBy: adminId, status: "ready" };
+  const bracketSize = nextBracketSize(selected.length);
+  const bracketRounds = bracketSize > 1 ? Math.ceil(Math.log2(bracketSize)) : 0;
+  const tournament: Tournament = { id, teamIds: selected.map((team) => team.id), createdAt: now(), createdBy: adminId, status: "ready", bracketSize, bracketRounds };
   data.tournamentIds.push(id);
   data.tournaments[id] = tournament;
   for (const team of selected) {
@@ -263,11 +271,13 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
       id: `m${number}`,
       number,
       tournamentId: id,
-      stage: "Основной этап",
+      stage: stageName(1, bracketRounds),
       team1Id: selected[index].id,
       team2Id: selected[index + 1]?.id,
       timezone: "Europe/Moscow",
       status: "scheduled",
+      bracketRound: 1,
+      bracketSlot: Math.floor(index / 2),
     };
     data.matchIds.push(match.id);
     data.matches[match.id] = match;
@@ -275,6 +285,82 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
   data.auditEvents.push({ at: tournament.createdAt, type: "tournament_created", tournamentId: id, adminId });
   if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
   return tournament;
+}
+
+function nextBracketSize(count: number): number {
+  let size = 1;
+  while (size < Math.max(1, count)) size *= 2;
+  return size;
+}
+
+export function stageName(round: number, totalRounds: number): string {
+  const remaining = totalRounds - round + 1;
+  if (remaining === 1) return "Финал";
+  if (remaining === 2) return "Полуфинал";
+  if (remaining === 3) return "Четвертьфинал";
+  if (remaining === 4) return "Раунд 1/8 финала";
+  return `Раунд ${round}`;
+}
+
+function tournamentRounds(tournament: Tournament): number {
+  return tournament.bracketRounds ?? (tournament.teamIds.length > 1 ? Math.ceil(Math.log2(nextBracketSize(tournament.teamIds.length))) : 0);
+}
+
+function matchRound(match: MatchTable): number { return match.bracketRound ?? 1; }
+function matchSlot(match: MatchTable): number { return match.bracketSlot ?? Math.max(0, match.number - 1); }
+
+/** Adds a winner to the correct next bracket slot and schedules that fixture.
+ * It returns every auto-advance (including byes) so the caller can notify captains. */
+export function advanceMatchWinner(data: TournamentData, match: MatchTable, winnerId: string): { advanced: Array<{ teamId: string; nextMatch?: MatchTable }>; completed: boolean } {
+  const tournament = data.tournaments[match.tournamentId];
+  if (!tournament || !data.teams[winnerId]) return { advanced: [], completed: false };
+  match.winnerTeamId = winnerId;
+  match.result = `Победитель: ${data.teams[winnerId].name}`;
+  match.status = "completed";
+  const advanced: Array<{ teamId: string; nextMatch?: MatchTable }> = [];
+  advance(data, tournament, match, winnerId, advanced);
+  return { advanced, completed: tournament.status === "completed" };
+}
+
+function advance(data: TournamentData, tournament: Tournament, source: MatchTable, winnerId: string, advanced: Array<{ teamId: string; nextMatch?: MatchTable }>): void {
+  const round = matchRound(source); const total = tournamentRounds(tournament);
+  if (round >= total || total === 0) { tournament.status = "completed"; return; }
+  const parentRound = round + 1; const parentSlot = Math.floor(matchSlot(source) / 2);
+  let parent = tournamentMatches(data, tournament.id).find((item) => matchRound(item) === parentRound && matchSlot(item) === parentSlot);
+  if (!parent) {
+    const number = data.nextMatchNumber++;
+    parent = { id: `m${number}`, number, tournamentId: tournament.id, stage: stageName(parentRound, total), team1Id: winnerId, timezone: source.timezone || "Europe/Moscow", status: "scheduled", bracketRound: parentRound, bracketSlot: parentSlot };
+    const base = matchStartEpoch(source) ?? now();
+    scheduleMatch(parent, new Date(base + MATCH_DURATION_MS).toISOString());
+    data.matchIds.push(parent.id); data.matches[parent.id] = parent;
+  } else if (!parent.team1Id) parent.team1Id = winnerId;
+  else if (!parent.team2Id && parent.team1Id !== winnerId) parent.team2Id = winnerId;
+  advanced.push({ teamId: winnerId, nextMatch: parent });
+  // A branch with no registered entrant is a bye. Continue immediately so odd
+  // brackets never strand a captain waiting for a match that cannot exist.
+  if (!parent.team2Id && siblingBranchEmpty(tournament, parentRound, parentSlot, matchSlot(source) % 2)) {
+    parent.winnerTeamId = parent.team1Id;
+    parent.result = `Победитель по bye: ${data.teams[parent.team1Id]?.name ?? "команда"}`;
+    parent.status = "completed";
+    advance(data, tournament, parent, parent.team1Id, advanced);
+  }
+}
+
+function siblingBranchEmpty(tournament: Tournament, parentRound: number, parentSlot: number, sourceSide: number): boolean {
+  const childRound = parentRound - 1;
+  const siblingSlot = parentSlot * 2 + (sourceSide === 0 ? 1 : 0);
+  const leavesPerChild = 2 ** childRound;
+  const start = siblingSlot * leavesPerChild;
+  return !tournament.teamIds.slice(start, start + leavesPerChild).length;
+}
+
+/** Resolves first-round byes after bracket creation. */
+export function resolveBracketByes(data: TournamentData, tournament: Tournament): Array<{ teamId: string; nextMatch?: MatchTable }> {
+  const advanced: Array<{ teamId: string; nextMatch?: MatchTable }> = [];
+  for (const match of tournamentMatches(data, tournament.id).filter((item) => matchRound(item) === 1 && !item.team2Id && item.status !== "completed")) {
+    advanceMatchWinner(data, match, match.team1Id).advanced.forEach((item) => advanced.push(item));
+  }
+  return advanced;
 }
 
 /** Starts a prepared tournament and gives every fixture a real, visible start time. */
