@@ -23,6 +23,7 @@ export type NameReview = { id: string; requestedBy: string; candidate: string; s
 export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "active" };
 export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string };
 export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[] };
+export type RosterSlotUpdate = { teamId: string; slot: number; player?: Player };
 
 const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [] });
 let clock: () => number = () => Date.now();
@@ -115,6 +116,49 @@ export async function writeTournament(ctx: Ctx, data: TournamentData): Promise<v
   ctx.session.tournamentData = normalized;
 }
 
+/**
+ * Changes exactly one roster position. The Workers path is a single Durable
+ * Object request, so two quick taps cannot turn a slot-zero replacement into
+ * an insertion at slot one or leave a stale player behind.
+ */
+export async function updateRosterSlot(ctx: Ctx, update: RosterSlotUpdate): Promise<TournamentData> {
+  const ns = envFor(ctx)?.CHAT_DO;
+  if (ns) {
+    const response = await ns.get(ns.idFromName("tournament:data")).fetch("https://do/tournament/roster-slot", {
+      method: "POST", body: JSON.stringify(update),
+    });
+    if (!response.ok) throw new Error("Roster slot could not be saved.");
+    return normalize(await response.json());
+  }
+  const data = await readTournament(ctx);
+  applyRosterSlotUpdate(data, update);
+  await writeTournament(ctx, data);
+  return data;
+}
+
+/** Shared by the Durable Object and harness fallback; indexes are always zero-based. */
+export function applyRosterSlotUpdate(data: TournamentData, update: RosterSlotUpdate): void {
+  const team = data.teams[update.teamId];
+  if (!team || !Number.isInteger(update.slot) || update.slot < 0 || update.slot >= team.players.length) {
+    throw new Error("Roster slot is unavailable.");
+  }
+  const player = update.player;
+  if (player) {
+    const id = player.inGameId.trim().toLocaleLowerCase();
+    if (!id || !player.nickname.trim()) throw new Error("Player details are incomplete.");
+    if (team.players.some((current, index) => index !== update.slot && current.inGameId.trim().toLocaleLowerCase() === id)) {
+      throw new Error("This Game ID is already on the roster.");
+    }
+    // Assign rather than splice: slot 0 remains slot 0 for every replacement.
+    team.players[update.slot] = { inGameId: player.inGameId.trim(), nickname: player.nickname.trim(), isSubstitute: update.slot >= 5 };
+  } else {
+    // Preserve the position instead of shifting later players left.
+    team.players[update.slot] = { inGameId: "", nickname: "", isSubstitute: update.slot >= 5 };
+  }
+  const complete = team.players.slice(0, 5).every((current) => current.inGameId.trim() && current.nickname.trim());
+  team.status = complete ? (conflicts(data, team).length ? "pending_conflict" : "confirmed") : "needs_correction";
+}
+
 export function teams(data: TournamentData): Team[] {
   return data.teamIds.map((id) => data.teams[id]).filter((team): team is Team => Boolean(team));
 }
@@ -152,8 +196,12 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
 }
 
 export function conflicts(data: TournamentData, team: Team): Team[] {
-  const ids = new Set(team.players.map((player) => player.inGameId.toLowerCase()));
-  return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && other.players.some((p) => ids.has(p.inGameId.toLowerCase())));
+  const ids = new Set(team.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter(Boolean));
+  if (ids.size === 0) return [];
+  return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && other.players.some((p) => {
+    const id = p.inGameId.trim().toLocaleLowerCase();
+    return Boolean(id) && ids.has(id);
+  }));
 }
 
 /** Removes cosmetic differences before tournament nickname comparisons. */
