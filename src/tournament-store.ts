@@ -74,11 +74,11 @@ function normalize(value: unknown): TournamentData {
 
 /** Consistent identity for every user-facing team display. */
 export function teamIdentity(team: Pick<Team, "uniqueId" | "name">): string {
-  return `#${team.uniqueId} — ${team.name}`;
+  return `🏆 Team #${team.uniqueId} — ${team.name}`;
 }
 
 export function teamHeader(team: Pick<Team, "uniqueId" | "name">): string {
-  return `🏆 Team ${teamIdentity(team)}`;
+  return teamIdentity(team);
 }
 
 /** Keeps a small, durable audit trail without enumerating the store. */
