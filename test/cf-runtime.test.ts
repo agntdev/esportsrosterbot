@@ -22,7 +22,7 @@ describe("buildBot({ handlers }) — the Workers manifest path", () => {
         steps: [
           {
             send: { text: "/start" },
-            expect: [{ method: "sendMessage", payload: { text: "Не удалось распознать сообщение. Откройте /help." } }],
+            expect: [{ method: "sendMessage", payload: { text: "I couldn’t use that message. Open /start and choose an option." } }],
           },
         ],
       }),

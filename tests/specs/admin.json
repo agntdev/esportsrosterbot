@@ -1,0 +1,5 @@
+[
+  { "name": "admin command is denied when owner access is unset", "steps": [
+    { "send": { "text": "/admin" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Доступ администратора ещё не настроен." } }] }
+  ] }
+]

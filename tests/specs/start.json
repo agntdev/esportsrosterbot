@@ -1,23 +1,5 @@
 [
-  {
-    "name": "/start replies with the welcome + main menu",
-    "steps": [
-      {
-        "send": { "text": "/start" },
-        "expect": [
-          {
-            "method": "sendMessage",
-            "payload": { "text": "Выберите действие для участия в турнире." }
-          }
-        ]
-      }
-    ]
-  }
-  ,
-  {
-    "name": "Кнопка главного меню восстанавливает меню",
-    "steps": [
-      { "send": { "text": "Главное меню" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Выберите действие для участия в турнире." } }] }
-    ]
-  }
+  { "name": "start opens the Team Collector menu", "steps": [
+    { "send": { "text": "/start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Manage your tournament roster here. Choose an option." } }] }
+  ] }
 ]

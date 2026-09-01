@@ -1,4 +1,5 @@
 [
-  { "name": "Помощь объясняет меню", "steps": [{ "send": { "text": "/help" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Откройте /start и выберите действие кнопкой.\n\nРегистрация, состав команды и таблица матчей доступны в меню." } }] }] },
-  { "name": "Повторное открытие справки не ломает кнопку", "steps": [{ "send": { "callback": "menu:help" }, "expect": [{ "method": "answerCallbackQuery" }, { "method": "editMessageText", "payload": { "text": "Откройте /start и выберите действие кнопкой.\n\nРегистрация, состав команды и таблица матчей доступны в меню." } }] }, { "send": { "callback": "menu:help" }, "expect": [{ "method": "answerCallbackQuery" }, { "method": "editMessageText", "payload": { "text": "Откройте /start и выберите действие кнопкой.\n\nРегистрация, состав команды и таблица матчей доступны в меню." } }] }] }
+  { "name": "help explains the roster flow", "steps": [
+    { "send": { "text": "/help" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Register a seven-player roster, review it, then submit it for approval. Use View matches for the public table." } }] }
+  ] }
 ]
