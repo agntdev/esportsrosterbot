@@ -14,6 +14,7 @@ import { webhookCallback, Composer, type Bot } from "grammy";
 import { buildBot, type Ctx } from "./bot.js";
 import { handlers } from "./handlers.generated.js";
 import { createDurableSessionStorage, type WorkerEnv } from "./toolkit/session/durable.js";
+import { matchExportCsv, matchExportRows, type TournamentData } from "./tournament-store.js";
 
 export { ChatDO } from "./toolkit/session/durable.js";
 
@@ -64,6 +65,16 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ ok: true, runtime: "cloudflare-workers" });
+    }
+
+    // Public tournament data mirrors the public table.  It deliberately
+    // exposes only match/team labels, never roster records or contact details.
+    if (request.method === "GET" && (url.pathname === "/api/matches" || url.pathname === "/api/matches.csv")) {
+      const response = await env.CHAT_DO.get(env.CHAT_DO.idFromName("tournament:data")).fetch("https://do/tournament", { method: "GET" });
+      if (!response.ok) return new Response("Таблица матчей временно недоступна.", { status: 503 });
+      const data = await response.json() as TournamentData;
+      if (url.pathname.endsWith(".csv")) return new Response(matchExportCsv(data), { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=matches.csv" } });
+      return Response.json(matchExportRows(data));
     }
 
     if (request.method === "POST" && url.pathname === "/tg") {

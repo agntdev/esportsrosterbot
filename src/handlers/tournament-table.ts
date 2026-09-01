@@ -1,91 +1,73 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { inlineButton, inlineKeyboard, registerMainMenuItem, urlButton } from "../toolkit/index.js";
-import { activeTournament, readTournament, teamIdentity, teams, type Player, type Team, type TournamentData } from "../tournament-store.js";
+import { activeTournament, captainIdentifier, readTournament, teamIdentity, teams, tournamentMatches, type MatchTable, type Player, type Team, type TournamentData } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Список команд", data: "teams:show", order: 30 });
 registerMainMenuItem({ label: "Таблица матчей", data: "matches:show", order: 40 });
 registerMainMenuItem({ label: "Турнир", data: "tournament:show", order: 50 });
 const composer = new Composer<Ctx>();
-function status(status: string): string { return status === "entered" ? "В турнире" : status === "confirmed" ? "Подтверждена" : status === "awaiting_payment" ? "Ожидает оплаты" : status === "pending_conflict" ? "На проверке" : status === "needs_correction" ? "Нужна правка" : "Отклонена"; }
-function teamText(list: ReturnType<typeof teams>): string { return list.length ? `Команды\n\n${list.map((team) => `${teamIdentity(team)}\nСтатус: ${status(team.status)}`).join("\n\n")}` : "Команд пока нет — зарегистрируйте первую заявку."; }
-function matchText(list: ReturnType<typeof teams>): string { const active = list.filter((team) => team.status === "confirmed" || team.status === "entered"); return active.length ? `Таблица матчей\n\n${active.map((team) => `${teamIdentity(team)} — ${team.matchStatus === "won" ? "Победа" : team.matchStatus === "lost" ? "Поражение" : team.matchLink ? "Ссылка опубликована" : "Матч ожидается"}`).join("\n")}` : "Подтверждённых команд пока нет — таблица появится после регистрации."; }
-async function show(ctx: Ctx, kind: "team" | "match", edit: boolean): Promise<void> { const list = teams(await readTournament(ctx)); const text = kind === "team" ? teamText(list) : matchText(list); const rows: Array<Array<ReturnType<typeof inlineButton> | ReturnType<typeof urlButton>>> = kind === "match" ? list.filter((team) => (team.status === "confirmed" || team.status === "entered") && team.matchLink).slice(0, 7).map((team) => [urlButton(`Открыть ${teamIdentity(team)}`.slice(0, 24), team.matchLink!)]) : []; rows.push([inlineButton("В меню", "menu:main")]); const extra = inlineKeyboard(rows); if (edit) await ctx.editMessageText(text, { reply_markup: extra }); else await ctx.reply(text, { reply_markup: extra }); }
-composer.callbackQuery("teams:show", async (ctx) => { await ctx.answerCallbackQuery(); await show(ctx, "team", true); });
-composer.callbackQuery("matches:show", async (ctx) => { await ctx.answerCallbackQuery(); await show(ctx, "match", true); });
+const input = { force_reply: true, input_field_placeholder: "Введите название команды" } as const;
+type MatchViewSession = { flow?: string; matchStage?: string; matchTeamQuery?: string };
+const view = (ctx: Ctx): MatchViewSession => ctx.session as unknown as MatchViewSession;
 
-function populated(player: Player | undefined): player is Player { return Boolean(player?.nickname.trim() && player.inGameId.trim()); }
-function duplicateIds(data: TournamentData, team: Team): Set<string> {
-  const own = new Set(team.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter(Boolean));
-  const duplicates = new Set<string>();
-  for (const other of teams(data)) {
-    if (other.id === team.id) continue;
-    for (const player of other.players) {
-      const id = player.inGameId.trim().toLocaleLowerCase();
-      if (id && own.has(id)) duplicates.add(id);
-    }
-  }
-  return duplicates;
+function status(value: string): string { return value === "entered" ? "В турнире" : value === "confirmed" ? "Подтверждена" : value === "awaiting_payment" ? "Ожидает оплаты" : value === "pending_conflict" ? "На проверке" : value === "needs_correction" ? "Нужна правка" : "Отклонена"; }
+function teamText(list: Team[]): string { return list.length ? `Команды\n\n${list.map((team) => `${teamIdentity(team)}\nСтатус: ${status(team.status)}`).join("\n\n")}` : "Команд пока нет — зарегистрируйте первую заявку."; }
+function teamDisplay(team: Team | undefined): string { return team ? `${team.name} (капитан: ${captainIdentifier(team)})` : "Не назначено"; }
+function formatTime(timestamp: number | undefined, timezone: string): string {
+  if (!timestamp) return "Не назначено";
+  const parts = new Intl.DateTimeFormat("ru-RU", { timeZone: timezone, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(timestamp));
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("day")}.${value("month")}.${value("year")} ${value("hour")}:${value("minute")}`;
 }
-function playerLine(player: Player | undefined, duplicates: Set<string>, prefix: string, unassigned = false): string {
-  if (!populated(player)) return `${prefix}Пустой слот`;
-  const conflict = duplicates.has(player.inGameId.trim().toLocaleLowerCase()) ? " ⚠️ конфликт ID" : "";
-  return `${prefix}${player.nickname} (${player.inGameId})${conflict}${unassigned ? " — не назначен" : ""}`;
+function matchLine(data: TournamentData, match: MatchTable): string {
+  const team1 = data.teams[match.team1Id]; const team2 = match.team2Id ? data.teams[match.team2Id] : undefined;
+  return [`№ матча: ${match.number}`, `Этап: ${match.stage}`, `Команда 1 (капитан): ${teamDisplay(team1)}`, `Команда 2 (капитан): ${teamDisplay(team2)}`, `Дата и время: ${formatTime(match.scheduledTime, match.timezone)}`, `Сервер / Ссылка: ${match.serverLink ?? "Не назначено"}`, `Статус: ${match.status === "completed" ? "Завершён" : "Запланирован"}`, `Результат: ${match.result ?? "Не определён"}`].join("\n");
 }
-/** A fixed seven-slot card keeps the tournament preparation screen scannable. */
-export function rosterCard(data: TournamentData, team: Team, full = false): string {
-  const duplicates = duplicateIds(data, team);
-  const starters = Array.from({ length: 5 }, (_, index) => {
-    const player = team.players[index];
-    return player && !player.isSubstitute ? player : undefined;
-  });
-  const subs = team.players.slice(5).map((player) => ({ player, unassigned: !player.isSubstitute })).slice(0, 2);
-  const captain = starters[0];
-  const captainText = populated(captain) ? `${captain.nickname} (ID: ${captain.inGameId})` : "Пустой слот";
-  const lines = [
-    `Команда: ${team.name}`,
-    `Капитан: ${captainText}`,
-    "Основной состав:",
-    ...starters.map((player, index) => playerLine(player, duplicates, `${index + 1}. `)),
-    "Замены:",
-    ...Array.from({ length: 2 }, (_, index) => playerLine(subs[index]?.player, duplicates, `- Замена ${index + 1}: `, subs[index]?.unassigned)),
+function filteredMatches(data: TournamentData, ctx: Ctx): MatchTable[] {
+  const active = activeTournament(data); const filter = view(ctx); const query = filter.matchTeamQuery?.trim().toLocaleLowerCase();
+  return tournamentMatches(data, active?.id).filter((match) => {
+    const names = `${data.teams[match.team1Id]?.name ?? ""} ${match.team2Id ? data.teams[match.team2Id]?.name ?? "" : ""}`.toLocaleLowerCase();
+    return (!filter.matchStage || match.stage === filter.matchStage) && (!query || names.includes(query));
+  }).sort((a, b) => (a.scheduledTime ?? Number.MAX_SAFE_INTEGER) - (b.scheduledTime ?? Number.MAX_SAFE_INTEGER) || a.number - b.number);
+}
+function matchKeyboard(data: TournamentData, ctx: Ctx, list: MatchTable[]) {
+  const stages = [...new Set(tournamentMatches(data, activeTournament(data)?.id).map((match) => match.stage))];
+  const rows = [
+    [inlineButton("Фильтр по этапу", "matches:filter:stage"), inlineButton("Поиск команды", "matches:filter:team")],
+    [inlineButton("Сбросить фильтры", "matches:filter:clear")],
+    ...stages.slice(0, 5).map((stage, index) => [inlineButton(stage.slice(0, 24), `matches:stage:${index}`)]),
+    ...list.map((match) => [inlineButton(`Команда 1: ${data.teams[match.team1Id]?.name?.slice(0, 18) ?? "—"}`, `team:detail:${match.team1Id}`), ...(match.team2Id ? [inlineButton(`Команда 2: ${data.teams[match.team2Id]?.name?.slice(0, 18) ?? "—"}`, `team:detail:${match.team2Id}`)] : [])]),
+    [inlineButton("В меню", "menu:main")],
   ];
-  if (full && team.players.length > 7) {
-    for (const player of team.players.slice(7)) lines.push(playerLine(player, duplicates, "- Дополнительно: ", !player.isSubstitute));
-  }
-  return lines.join("\n");
-}
-function rawRoster(team: Team): string {
-  return `${teamIdentity(team)}\nКапитан: ${team.captainContact || team.players[0]?.nickname || "не указан"}\nСостав: ${team.players.map((player) => `${player.inGameId} — ${player.nickname}`).join(", ") || "не указан"}`;
-}
-function rosterKeyboard(data: TournamentData, list: Team[], clean: boolean): ReturnType<typeof inlineKeyboard> {
-  const rows = [[inlineButton(clean ? "Полный вид" : "Компактный вид", `tournament:view:${clean ? "raw" : "clean"}`)]];
-  for (const team of list) {
-    if (team.players.length > 7) rows.push([inlineButton("Показать полный состав", `tournament:roster:${team.id}:full`)]);
-    if (duplicateIds(data, team).size) rows.push([inlineButton("Решить конфликт ID", `admin:conf:${team.id}`)]);
-  }
-  rows.push([inlineButton("Таблица матчей", "matches:show")], [inlineButton("В меню", "menu:main")]);
+  // Stage callbacks use an index, keeping callback payloads under Telegram's limit.
+  void ctx;
   return inlineKeyboard(rows);
 }
-async function showTournament(ctx: Ctx, clean: boolean, edit: boolean): Promise<void> {
-  const data = await readTournament(ctx);
-  const tournament = activeTournament(data);
-  if (!tournament) {
-    const options = { reply_markup: inlineKeyboard([[inlineButton("В меню", "menu:main")]]) };
-    if (edit) await ctx.editMessageText("Турнир ещё не составлен — таблица появится после решения организатора.", options); else await ctx.reply("Турнир ещё не составлен — таблица появится после решения организатора.", options);
-    return;
-  }
-  const entered = tournament.teamIds.map((id) => data.teams[id]).filter((team): team is Team => Boolean(team));
-  const text = `Подготовка турнира\n${clean ? "Подробный" : "Компактный"} вид\n\n${entered.map((team) => clean ? rosterCard(data, team) : rawRoster(team)).join("\n\n")}`;
-  const options = { reply_markup: rosterKeyboard(data, entered, clean) };
+async function showMatches(ctx: Ctx, edit: boolean): Promise<void> {
+  const data = await readTournament(ctx); const active = activeTournament(data);
+  if (!active) { const text = "Турнир ещё не составлен — таблица появится после решения организатора."; if (edit) await ctx.editMessageText(text, { reply_markup: inlineKeyboard([[inlineButton("В меню", "menu:main")]]) }); else await ctx.reply(text); return; }
+  const list = filteredMatches(data, ctx);
+  const text = list.length ? `Таблица матчей\n\n${list.map((match) => matchLine(data, match)).join("\n\n")}` : "Матчи по этому фильтру не найдены. Сбросьте фильтры или выберите другой запрос.";
+  const options = { reply_markup: matchKeyboard(data, ctx, list) };
   if (edit) await ctx.editMessageText(text, options); else await ctx.reply(text, options);
 }
-composer.callbackQuery("tournament:show", async (ctx) => { await ctx.answerCallbackQuery(); await showTournament(ctx, true, true); });
-composer.callbackQuery(/^tournament:view:(clean|raw)$/, async (ctx) => { await ctx.answerCallbackQuery(); await showTournament(ctx, ctx.match?.[1] === "clean", true); });
-composer.callbackQuery(/^tournament:roster:(t\d+):full$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const data = await readTournament(ctx); const team = data.teams[ctx.match?.[1] ?? ""];
-  if (!team) { await ctx.reply("Эта команда больше недоступна."); return; }
-  await ctx.reply(rosterCard(data, team, true), { reply_markup: inlineKeyboard([[inlineButton("К подготовке турнира", "tournament:show")]]) });
-});
+async function showTeams(ctx: Ctx): Promise<void> { const list = teams(await readTournament(ctx)); await ctx.editMessageText(teamText(list), { reply_markup: inlineKeyboard([[inlineButton("В меню", "menu:main")]]) }); }
+composer.callbackQuery("teams:show", async (ctx) => { await ctx.answerCallbackQuery(); await showTeams(ctx); });
+composer.callbackQuery("matches:show", async (ctx) => { await ctx.answerCallbackQuery(); await showMatches(ctx, true); });
+composer.callbackQuery("matches:filter:stage", async (ctx) => { await ctx.answerCallbackQuery(); const stages = [...new Set(tournamentMatches(await readTournament(ctx), activeTournament(await readTournament(ctx))?.id).map((match) => match.stage))]; await ctx.reply(stages.length ? "Выберите этап для таблицы." : "Этапы пока не созданы.", { reply_markup: stages.length ? inlineKeyboard(stages.slice(0, 5).map((stage, index) => [inlineButton(stage.slice(0, 24), `matches:stage:${index}`)])) : undefined }); });
+composer.callbackQuery(/^matches:stage:(\d+)$/, async (ctx) => { await ctx.answerCallbackQuery(); const data = await readTournament(ctx); const stages = [...new Set(tournamentMatches(data, activeTournament(data)?.id).map((match) => match.stage))]; const stage = stages[Number(ctx.match?.[1])]; if (!stage) { await ctx.reply("Этот этап больше недоступен."); return; } view(ctx).matchStage = stage; await showMatches(ctx, false); });
+composer.callbackQuery("matches:filter:team", async (ctx) => { await ctx.answerCallbackQuery(); view(ctx).flow = "match_team_filter"; await ctx.reply("Введите название команды для поиска.", { reply_markup: input }); });
+composer.callbackQuery("matches:filter:clear", async (ctx) => { await ctx.answerCallbackQuery(); view(ctx).matchStage = undefined; view(ctx).matchTeamQuery = undefined; await showMatches(ctx, true); });
+composer.callbackQuery(/^team:detail:(t\d+)$/, async (ctx) => { await ctx.answerCallbackQuery(); const data = await readTournament(ctx); const team = data.teams[ctx.match?.[1] ?? ""]; if (!team) { await ctx.reply("Эта команда больше недоступна."); return; } await ctx.reply(rosterCard(data, team), { reply_markup: inlineKeyboard([[inlineButton("К таблице матчей", "matches:show")]]) }); });
+
+function populated(player: Player | undefined): player is Player { return Boolean(player?.nickname.trim() && player.inGameId.trim()); }
+function duplicateIds(data: TournamentData, team: Team): Set<string> { const own = new Set(team.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter(Boolean)); const duplicates = new Set<string>(); for (const other of teams(data)) for (const player of other.players) { const id = player.inGameId.trim().toLocaleLowerCase(); if (other.id !== team.id && id && own.has(id)) duplicates.add(id); } return duplicates; }
+function playerLine(player: Player | undefined, duplicates: Set<string>, prefix: string, unassigned = false): string { if (!populated(player)) return `${prefix}Пустой слот`; return `${prefix}${player.nickname} (${player.inGameId})${duplicates.has(player.inGameId.trim().toLocaleLowerCase()) ? " ⚠️ конфликт ID" : ""}${unassigned ? " — не назначен" : ""}`; }
+/** Detailed pane preserves five starting positions and two substitute positions. */
+export function rosterCard(data: TournamentData, team: Team, full = false): string { const duplicates = duplicateIds(data, team); const starters = Array.from({ length: 5 }, (_, index) => team.players[index] && !team.players[index].isSubstitute ? team.players[index] : undefined); const subs = team.players.slice(5).map((player) => ({ player, unassigned: !player.isSubstitute })).slice(0, 2); const captain = starters[0]; const lines = [`Команда: ${team.name}`, `Капитан: ${populated(captain) ? `${captain.nickname} (ID: ${captain.inGameId})` : "Пустой слот"}`, "Основной состав:", ...starters.map((player, index) => playerLine(player, duplicates, `${index + 1}. `)), "Замены:", ...Array.from({ length: 2 }, (_, index) => playerLine(subs[index]?.player, duplicates, `- Замена ${index + 1}: `, subs[index]?.unassigned))]; if (full && team.players.length > 7) for (const player of team.players.slice(7)) lines.push(playerLine(player, duplicates, "- Дополнительно: ", !player.isSubstitute)); return lines.join("\n"); }
+async function showTournament(ctx: Ctx, edit: boolean): Promise<void> { const data = await readTournament(ctx); const tournament = activeTournament(data); if (!tournament) { const text = "Турнир ещё не составлен — таблица появится после решения организатора."; if (edit) await ctx.editMessageText(text); else await ctx.reply(text); return; } const entered = tournament.teamIds.map((id) => data.teams[id]).filter((team): team is Team => Boolean(team)); const text = `Подготовка турнира\nПодробный вид\n\n${entered.map((team) => rosterCard(data, team)).join("\n\n")}`; if (edit) await ctx.editMessageText(text, { reply_markup: inlineKeyboard([[inlineButton("Таблица матчей", "matches:show")], [inlineButton("В меню", "menu:main")]]) }); else await ctx.reply(text); }
+composer.callbackQuery("tournament:show", async (ctx) => { await ctx.answerCallbackQuery(); await showTournament(ctx, true); });
+composer.on("message:text", async (ctx, next) => { if (view(ctx).flow !== "match_team_filter") return next(); const query = ctx.message.text.trim(); if (!query || query.length > 128) { await ctx.reply("Введите название команды до 128 символов.", { reply_markup: input }); return; } view(ctx).flow = undefined; view(ctx).matchTeamQuery = query; await showMatches(ctx, false); });
+export { formatTime, matchLine };
 export default composer;
