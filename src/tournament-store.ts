@@ -269,7 +269,7 @@ export const MATCH_DURATION_MS = 60 * 60 * 1000;
 /** Parses a Moscow tournament date and 24-hour time into an ISO UTC instant. */
 export function parseMatchStart(date: string, time: string): string | undefined {
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  const timeMatch = /^(\d{2}):(\d{2})$/.exec(time);
+  const timeMatch = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
   if (!dateMatch || !timeMatch) return undefined;
   const [, year, month, day] = dateMatch;
   const [, hour, minute] = timeMatch;
@@ -301,12 +301,16 @@ export function captainIdentifier(team: Team): string {
 export function matchExportRows(data: TournamentData, tournamentId?: string): Array<Record<string, string | number>> {
   return tournamentMatches(data, tournamentId).map((match) => {
     const team1 = data.teams[match.team1Id]; const team2 = match.team2Id ? data.teams[match.team2Id] : undefined;
-    return { team1_name: team1?.name ?? "", team1_captain_id: team1?.captainTelegramId ?? "", team2_name: team2?.name ?? "", team2_captain_id: team2?.captainTelegramId ?? "", start_time: match.startTime ?? "", end_time: match.endTime ?? "", timezone: match.timezone, status: match.status, result: match.result ?? "" };
+    const start = matchStartEpoch(match);
+    const dateParts = start === undefined ? [] : new Intl.DateTimeFormat("en-CA", { timeZone: match.timezone || "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(start));
+    const datePart = (type: string) => dateParts.find((part) => part.type === type)?.value ?? "";
+    const date = start === undefined ? "" : `${datePart("year")}-${datePart("month")}-${datePart("day")}`;
+    return { team1_name: team1?.name ?? "", team1_captain_id: team1?.captainTelegramId ?? "", team2_name: team2?.name ?? "", team2_captain_id: team2?.captainTelegramId ?? "", date, start_time: match.startTime ?? "", end_time: match.endTime ?? "", timezone: match.timezone, status: match.status, result: match.result ?? "" };
   });
 }
 
 export function matchExportCsv(data: TournamentData, tournamentId?: string): string {
-  const fields = ["team1_name", "team1_captain_id", "team2_name", "team2_captain_id", "start_time", "end_time", "timezone", "status", "result"];
+  const fields = ["team1_name", "team1_captain_id", "team2_name", "team2_captain_id", "date", "start_time", "end_time", "timezone", "status", "result"];
   const quote = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
   return [fields.join(","), ...matchExportRows(data, tournamentId).map((row) => fields.map((field) => quote(row[field] ?? "")).join(","))].join("\n");
 }
