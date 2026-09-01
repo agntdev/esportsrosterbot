@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, isOwner, registerMainMenuItem } from "../toolkit/index.js";
-import { conflicts, readTournament, teamHeader, teamIdentity, teams, writeTournament } from "../tournament-store.js";
+import { conflicts, nicknameConflict, readTournament, teamHeader, teamIdentity, teams, type NameSubject, writeTournament } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Редактировать команду", data: "edit:team", order: 20 });
 const composer = new Composer<Ctx>();
@@ -12,6 +12,7 @@ type EditSession = {
   editingTeamId?: string;
   editingSlot?: number;
   pendingTeamName?: string;
+  blockedName?: { value: string; subject: NameSubject };
 };
 const editSession = (ctx: Ctx): EditSession => ctx.session as unknown as EditSession;
 
@@ -78,26 +79,13 @@ composer.callbackQuery("edit:team:id:confirm", async (ctx) => {
   await ctx.reply(`ID команды #${team.uniqueId} подтверждён. Введите название команды. Текущее: ${team.name}.`, { reply_markup: nameInput });
 });
 
-composer.callbackQuery("edit:team:name:keep", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const s = editSession(ctx);
-  if (s.flow !== "edit_team_name_duplicate" || !s.pendingTeamName) { await ctx.reply("Введите название команды ещё раз."); return; }
-  const data = await readTournament(ctx);
-  const team = s.editingTeamId ? data.teams[s.editingTeamId] : undefined;
-  if (!team || !canEdit(ctx, team.captainTelegramId)) { s.flow = undefined; await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
-  team.name = s.pendingTeamName;
-  await writeTournament(ctx, data);
-  s.flow = undefined;
-  s.pendingTeamName = undefined;
-  await ctx.reply(`Команда обновлена: ${teamIdentity(team)}.`, { reply_markup: completedIdentityKeyboard() });
-});
-
 composer.callbackQuery("edit:team:name:change", async (ctx) => {
   await ctx.answerCallbackQuery();
   const s = editSession(ctx);
-  if (s.flow !== "edit_team_name_duplicate") { await ctx.reply("Сначала откройте редактирование команды."); return; }
+  if (s.flow !== "edit_team_name_blocked") { await ctx.reply("Сначала откройте редактирование команды."); return; }
   s.flow = "edit_team_name";
   s.pendingTeamName = undefined;
+  s.blockedName = undefined;
   await ctx.reply("Введите другое название команды.", { reply_markup: nameInput });
 });
 
@@ -131,11 +119,10 @@ composer.on("message:text", async (ctx, next) => {
     const team = s.editingTeamId ? data.teams[s.editingTeamId] : undefined;
     if (!team || !canEdit(ctx, team.captainTelegramId)) { s.flow = undefined; await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
     if (!name || name.length > 128) { await ctx.reply("Введите название команды до 128 символов.", { reply_markup: nameInput }); return; }
-    const duplicate = teams(data).some((other) => other.id !== team.id && other.name.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
-    if (duplicate) {
-      s.pendingTeamName = name;
-      s.flow = "edit_team_name_duplicate";
-      await ctx.reply("⚠️ Команда с таким названием уже зарегистрирована. Вы можете оставить это название или выбрать другое.", { reply_markup: inlineKeyboard([[inlineButton("Оставить название", "edit:team:name:keep"), inlineButton("Выбрать другое", "edit:team:name:change")]]) });
+    if (nicknameConflict(data, name, "team", team.id)) {
+      s.flow = "edit_team_name_blocked";
+      s.blockedName = { value: name, subject: "team" };
+      await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")], [inlineButton("Выбрать другой ник", "edit:team:name:change")]]) });
       return;
     }
     team.name = name;
@@ -153,6 +140,11 @@ composer.on("message:text", async (ctx, next) => {
   const slot = s.editingSlot;
   if (!team || slot === undefined || !canEdit(ctx, team.captainTelegramId)) { s.flow = undefined; await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
   if (team.players.some((player, index) => index !== slot && player.inGameId.toLowerCase() === inGameId.toLowerCase())) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: rosterInput }); return; }
+  if (nicknameConflict(data, nickname, "player", team.id, team.players.filter((_, index) => index !== slot).map((player) => player.nickname))) {
+    s.blockedName = { value: nickname, subject: "player" };
+    await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
+    return;
+  }
   team.players[slot] = { inGameId, nickname, isSubstitute: slot >= 5 };
   const overlap = conflicts(data, team);
   team.status = overlap.length ? "pending_conflict" : "confirmed";
