@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, isOwner, registerMainMenuItem } from "../toolkit/index.js";
-import { conflicts, nicknameConflict, readTournament, teamHeader, teamIdentity, teams, type NameSubject, writeTournament } from "../tournament-store.js";
+import { conflicts, nicknameConflict, readTournament, teamHeader, teamIdentity, teams, type NameSubject, updateRosterSlot, writeTournament } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Редактировать команду", data: "edit:team", order: 20 });
 const composer = new Composer<Ctx>();
@@ -18,7 +18,7 @@ const editSession = (ctx: Ctx): EditSession => ctx.session as unknown as EditSes
 
 function rosterKeyboard(count: number) {
   const rows = [] as ReturnType<typeof inlineKeyboard>["inline_keyboard"];
-  for (let i = 0; i < count; i += 1) rows.push([inlineButton(`${i < 5 ? `Игрок ${i + 1}` : `Замена ${i - 4}`}`, `edit:slot:${i}`)]);
+  for (let i = 0; i < count; i += 1) rows.push([inlineButton(`${i < 5 ? `Игрок ${i + 1}` : `Замена ${i - 4}`}`, `edit:slot:${i}`), inlineButton("Очистить", `edit:clear:${i}`)]);
   rows.push([inlineButton("В меню", "menu:main")]);
   return inlineKeyboard(rows);
 }
@@ -115,6 +115,26 @@ composer.callbackQuery(/^edit:slot:(\d+)$/, async (ctx) => {
   await ctx.reply(`Введите Game ID и никнейм для ${slot < 5 ? `игрока ${slot + 1}` : `замены ${slot - 4}`} через |.`, { reply_markup: rosterInput });
 });
 
+composer.callbackQuery(/^edit:clear:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const slot = Number(ctx.match?.[1]);
+  const s = editSession(ctx);
+  const data = await readTournament(ctx);
+  const team = s.editingTeamId ? data.teams[s.editingTeamId] : undefined;
+  if (s.flow !== undefined || !team || !canEdit(ctx, team.captainTelegramId) || !Number.isInteger(slot) || slot < 0 || slot >= team.players.length) {
+    await ctx.reply("Этот слот недоступен. Откройте редактирование команды снова.");
+    return;
+  }
+  if (!team.players[slot].inGameId) { await ctx.reply("Этот слот уже пуст."); return; }
+  try {
+    await updateRosterSlot(ctx, { teamId: team.id, slot });
+  } catch {
+    await ctx.reply("Не удалось очистить слот. Откройте состав и попробуйте ещё раз.");
+    return;
+  }
+  await ctx.reply(`Слот ${slot < 5 ? `игрока ${slot + 1}` : `замены ${slot - 4}`} очищен. ${slot < 5 ? "Добавьте игрока, чтобы заявка снова стала полной." : ""}`.trim(), { reply_markup: rosterKeyboard(team.players.length) });
+});
+
 composer.on("message:text", async (ctx, next) => {
   const s = editSession(ctx);
   if (s.flow === "edit_team_name") {
@@ -149,19 +169,25 @@ composer.on("message:text", async (ctx, next) => {
     await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
     return;
   }
-  team.players[slot] = { inGameId, nickname, isSubstitute: slot >= 5 };
-  const overlap = conflicts(data, team);
-  team.status = overlap.length ? "pending_conflict" : "confirmed";
-  await writeTournament(ctx, data);
+  let updated;
+  try {
+    updated = await updateRosterSlot(ctx, { teamId: team.id, slot, player: { inGameId, nickname, isSubstitute: slot >= 5 } });
+  } catch {
+    await ctx.reply("Не удалось обновить слот. Проверьте, что этот Game ID не занят в составе, и попробуйте ещё раз.", { reply_markup: rosterInput });
+    return;
+  }
+  const updatedTeam = updated.teams[team.id];
+  if (!updatedTeam) { await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
+  const overlap = conflicts(updated, updatedTeam);
   if (overlap.length) {
     const admin = adminChatId(ctx as Ctx & { env?: Record<string, unknown> });
-    const ids = team.players.filter((player) => overlap.some((other) => other.players.some((otherPlayer) => otherPlayer.inGameId.toLowerCase() === player.inGameId.toLowerCase()))).map((player) => player.inGameId).join(", ");
+    const ids = updatedTeam.players.filter((player) => overlap.some((other) => other.players.some((otherPlayer) => otherPlayer.inGameId.toLowerCase() === player.inGameId.toLowerCase()))).map((player) => player.inGameId).join(", ");
     if (admin) {
-      try { await ctx.api.sendMessage(admin, `${teamHeader(team)}\nКонфликт ID с: ${overlap.map((other) => teamIdentity(other)).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить эту", `conf:new:${team.id}`), inlineButton("Оставить прежнюю", `conf:old:${team.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
+      try { await ctx.api.sendMessage(admin, `${teamHeader(updatedTeam)}\nКонфликт ID с: ${overlap.map((other) => teamIdentity(other)).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить эту", `conf:new:${updatedTeam.id}`), inlineButton("Оставить прежнюю", `conf:old:${updatedTeam.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
     }
   }
   s.flow = undefined; s.editingSlot = undefined;
-  await ctx.reply(overlap.length ? "Состав обновлён и ожидает проверки конфликта ID." : `Состав команды ${teamIdentity(team)} обновлён.`, { reply_markup: inlineKeyboard([[inlineButton("Изменить ещё", "edit:team"), inlineButton("Таблица матчей", "matches:show")]]) });
+  await ctx.reply(overlap.length ? "Состав обновлён и ожидает проверки конфликта ID." : `Состав команды ${teamIdentity(updatedTeam)} обновлён.`, { reply_markup: inlineKeyboard([[inlineButton("Изменить ещё", "edit:team"), inlineButton("Таблица матчей", "matches:show")]]) });
 });
 
 export default composer;

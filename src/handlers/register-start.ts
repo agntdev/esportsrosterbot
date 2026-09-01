@@ -76,7 +76,8 @@ function editPlayer(draft: Draft, field: EditableField, index?: number): Player 
   return undefined;
 }
 function duplicateDraftId(draft: Draft, player: Player): boolean {
-  const matches = draft.players.filter((item) => item !== player && item.inGameId.toLowerCase() === player.inGameId.toLowerCase());
+  const id = player.inGameId.trim().toLocaleLowerCase();
+  const matches = id ? draft.players.filter((item) => item !== player && item.inGameId.trim().toLocaleLowerCase() === id) : [];
   return matches.length > 0;
 }
 function conflictDetails(data: Awaited<ReturnType<typeof readTournament>>, team: Team): string {
@@ -100,7 +101,8 @@ async function notifyAdmin(ctx: Ctx, data: Awaited<ReturnType<typeof readTournam
 }
 async function publish(ctx: Ctx): Promise<void> {
   const draft = session(ctx).draft;
-  if (!draft || draft.players.filter((p) => !p.isSubstitute).length !== 5 || !draft.captainContact) { await ctx.reply("Анкета заполнена не полностью. Начните регистрацию заново."); reset(ctx); return; }
+  const ids = draft?.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter(Boolean) ?? [];
+  if (!draft || draft.players.filter((p) => !p.isSubstitute).length !== 5 || !draft.captainContact || draft.players.some((player) => !player.inGameId.trim() || !player.nickname.trim()) || new Set(ids).size !== ids.length) { await ctx.reply("Анкета заполнена не полностью или содержит повторяющийся Game ID. Исправьте заявку и подтвердите её снова."); return; }
   const data = await readTournament(ctx);
   const blockedTeam = nicknameConflict(data, draft.name, "team");
   const blockedPlayer = draft.players.find((player, index) => nicknameConflict(data, player.nickname, "player", undefined, draft.players.filter((_, otherIndex) => otherIndex !== index).map((item) => item.nickname)));
@@ -230,8 +232,9 @@ composer.on("message:text", async (ctx, next) => {
   if (flow === "edit_id") {
     const player = editPlayer(draft, s.editField ?? "player", s.editIndex) ?? s.pendingPlayer;
     if (!player || !value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
-    player.inGameId = value.slice(0, 128);
-    if (duplicateDraftId(draft, player)) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: input }); return; }
+    const candidate = { ...player, inGameId: value.slice(0, 128) };
+    if (duplicateDraftId(draft, candidate)) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: input }); return; }
+    player.inGameId = candidate.inGameId;
     s.flow = "edit_nickname";
     const label = s.editField === "captain" ? "Капитан" : s.editField === "sub" ? `Замена ${(s.editIndex ?? 0) + 1}` : `Игрок ${(s.editIndex ?? 0) + 1}`;
     await ctx.reply(`${label} — игровой никнейм. Текущее: ${player.nickname || "не указано"}.`, { reply_markup: input });
@@ -240,13 +243,14 @@ composer.on("message:text", async (ctx, next) => {
   if (flow === "edit_nickname") {
     const player = editPlayer(draft, s.editField ?? "player", s.editIndex) ?? s.pendingPlayer;
     if (!player || !value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
-    player.nickname = value.slice(0, 128);
+    const candidate = value.slice(0, 128);
     const localNames = draft.players.filter((item) => item !== player).map((item) => item.nickname).filter(Boolean);
-    if (nicknameConflict(await readTournament(ctx), player.nickname, "player", undefined, localNames)) {
-      s.blockedName = { value: player.nickname, subject: "player" };
+    if (nicknameConflict(await readTournament(ctx), candidate, "player", undefined, localNames)) {
+      s.blockedName = { value: candidate, subject: "player" };
       await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
       return;
     }
+    player.nickname = candidate;
     if (s.editField === "captain") {
       s.flow = "edit_contact";
       await ctx.reply(`Укажите контакт капитана. Текущий: ${draft.captainContact || "не указано"}.`, { reply_markup: input });
@@ -264,16 +268,25 @@ composer.on("message:text", async (ctx, next) => {
   }
   if (flow === "team_name") { const fallback = ctx.from?.username?.trim() || ctx.from?.first_name?.trim() || "Команда"; await acceptName(ctx, value || `${fallback}-${now()}`, "starter_id"); return; }
   if (!value) { await ctx.reply("Это поле обязательно. Введите значение.", { reply_markup: input }); return; }
-  if (flow === "starter_id" || flow === "sub_id") { currentPlayer(draft).inGameId = value.slice(0, 128); s.flow = flow === "starter_id" ? "starter_nickname" : "sub_nickname"; await ctx.reply(prompt(draft.players.length - 1, "nickname"), { reply_markup: input }); return; }
-  if (flow === "starter_nickname" || flow === "sub_nickname") {
-    currentPlayer(draft).nickname = value.slice(0, 128);
+  if (flow === "starter_id" || flow === "sub_id") {
     const player = currentPlayer(draft);
+    const candidate = { ...player, inGameId: value.slice(0, 128) };
+    if (duplicateDraftId(draft, candidate)) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: input }); return; }
+    player.inGameId = candidate.inGameId;
+    s.flow = flow === "starter_id" ? "starter_nickname" : "sub_nickname";
+    await ctx.reply(prompt(draft.players.length - 1, "nickname"), { reply_markup: input });
+    return;
+  }
+  if (flow === "starter_nickname" || flow === "sub_nickname") {
+    const player = currentPlayer(draft);
+    const candidate = value.slice(0, 128);
     const localNames = draft.players.filter((item) => item !== player).map((item) => item.nickname).filter(Boolean);
-    if (nicknameConflict(await readTournament(ctx), player.nickname, "player", undefined, localNames)) {
-      s.blockedName = { value: player.nickname, subject: "player" };
+    if (nicknameConflict(await readTournament(ctx), candidate, "player", undefined, localNames)) {
+      s.blockedName = { value: candidate, subject: "player" };
       await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
       return;
     }
+    player.nickname = candidate;
     if (flow === "sub_nickname") { s.flow = "sub_choice"; await ctx.reply("Замена добавлена. Добавьте ещё одну или перейдите к просмотру.", { reply_markup: optionalKeyboard() }); return; }
     if (draft.players.length === 1) { s.flow = "captain_contact"; await ctx.reply(prompt(0, "contact"), { reply_markup: input }); return; }
     if (draft.players.length < 5) { draft.players.push({ inGameId: "", nickname: "", isSubstitute: false }); s.flow = "starter_id"; await ctx.reply(prompt(draft.players.length - 1, "id"), { reply_markup: input }); return; }

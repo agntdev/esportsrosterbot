@@ -14,6 +14,7 @@
  */
 
 import type { StorageAdapter } from "grammy";
+import { applyRosterSlotUpdate, type RosterSlotUpdate, type TournamentData } from "../../tournament-store.js";
 
 // Minimal shapes so this file type-checks without pulling @cloudflare/workers-types
 // into the Node build. The real bindings are provided by the Workers runtime.
@@ -155,6 +156,23 @@ export class ChatDO {
       if (request.method === "PUT") {
         await this.state.storage.put("tournament-data", await request.json());
         return new Response(null, { status: 204 });
+      }
+    }
+
+    // This combines read, validation, replacement, and persistence in one
+    // serialized Durable Object request. A replacement always assigns the
+    // requested zero-based index; it never inserts or shifts roster entries.
+    if (url.pathname === "/tournament/roster-slot" && request.method === "POST") {
+      try {
+        const update = (await request.json()) as RosterSlotUpdate;
+        const data = ((await this.state.storage.get<unknown>("tournament-data")) ?? {
+          nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [],
+        }) as TournamentData;
+        applyRosterSlotUpdate(data, update);
+        await this.state.storage.put("tournament-data", data);
+        return Response.json(data);
+      } catch {
+        return new Response("invalid roster update", { status: 400 });
       }
     }
 
