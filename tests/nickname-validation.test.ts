@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { levenshtein, nicknameSimilar, normalizeNickname } from "../src/tournament-store.js";
+import { levenshtein, nicknameConflict, nicknameSimilar, normalizeNickname, type TournamentData } from "../src/tournament-store.js";
 
 describe("tournament nickname validation", () => {
   it("normalizes exact duplicates including diacritics and punctuation", () => {
@@ -16,5 +16,16 @@ describe("tournament nickname validation", () => {
     expect(levenshtein("northwind", "northwint")).toBe(1);
     expect(nicknameSimilar("northwind", "northwint")).toBe(true);
     expect(nicknameSimilar("northwind", "noxthxndz")).toBe(false);
+  });
+
+  it("does not treat unregistered or merely similar nicknames as a conflict", () => {
+    const data: TournamentData = {
+      nextTeamNumber: 2, registrationPrice: 0, teamIds: ["t1"], auditEvents: [], nextNameReviewNumber: 1,
+      nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [],
+      teams: { t1: { id: "t1", uniqueId: 1, name: "Alpha", captainTelegramId: "1", captainContact: "@alpha", paid: true, status: "confirmed", players: [{ inGameId: "one", nickname: "dim", isSubstitute: false }] } },
+    };
+    expect(nicknameConflict(data, "dima", "player")).toBe(false);
+    expect(nicknameConflict(data, "new-player", "player")).toBe(false);
+    expect(nicknameConflict(data, "dim", "player")).toBe(true);
   });
 });
