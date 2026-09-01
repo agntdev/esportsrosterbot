@@ -1,7 +1,7 @@
 import type { Ctx } from "./bot.js";
 
 export type Player = { inGameId: string; nickname: string; isSubstitute: boolean };
-export type TeamStatus = "awaiting_payment" | "confirmed" | "pending_conflict" | "needs_correction" | "rejected";
+export type TeamStatus = "awaiting_payment" | "confirmed" | "pending_conflict" | "needs_correction" | "rejected" | "entered";
 export type Team = {
   id: string;
   /** Human-facing, immutable tournament number. */
@@ -12,15 +12,19 @@ export type Team = {
   paid: boolean;
   matchLink?: string;
   matchStatus?: "pending" | "won" | "lost";
+  /** Set once a team is included in a published tournament. */
+  tournamentId?: string;
+  rosterLocked?: boolean;
   status: TeamStatus;
   players: Player[];
 };
 export type NameSubject = "team" | "player";
 export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
-export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected"; teamId?: string; reviewId?: string };
-export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }> };
+export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "active" };
+export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string };
+export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[] };
 
-const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [] });
+const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [] });
 let clock: () => number = () => Date.now();
 
 /** Single injectable clock seam for generated default names and future cutoffs. */
@@ -75,6 +79,9 @@ function normalize(value: unknown): TournamentData {
     nameReviews: data.nameReviews ?? {},
     nameReviewIds: data.nameReviewIds ?? [],
     nameOverrides: data.nameOverrides ?? [],
+    nextTournamentNumber: data.nextTournamentNumber ?? 1,
+    tournaments: data.tournaments ?? {},
+    tournamentIds: data.tournamentIds ?? [],
   };
 }
 
@@ -110,6 +117,38 @@ export async function writeTournament(ctx: Ctx, data: TournamentData): Promise<v
 
 export function teams(data: TournamentData): Team[] {
   return data.teamIds.map((id) => data.teams[id]).filter((team): team is Team => Boolean(team));
+}
+
+/** The currently published tournament, if the organizer has assembled one. */
+export function activeTournament(data: TournamentData): Tournament | undefined {
+  return [...data.tournamentIds].reverse().map((id) => data.tournaments[id]).find((tournament) => tournament?.status === "active");
+}
+
+/** Entry criteria are deliberately centralized so preview and confirmation agree. */
+export function eligibleTeams(data: TournamentData): Team[] {
+  return teams(data).filter((team) =>
+    team.status === "confirmed" &&
+    !team.rosterLocked &&
+    team.players.filter((player) => !player.isSubstitute).length === 5 &&
+    team.players.filter((player) => player.isSubstitute).length <= 2 &&
+    conflicts(data, team).length === 0,
+  );
+}
+
+export function createTournament(data: TournamentData, selected: Team[], adminId: string): Tournament {
+  const id = `tr${data.nextTournamentNumber++}`;
+  const tournament: Tournament = { id, teamIds: selected.map((team) => team.id), createdAt: now(), createdBy: adminId, status: "active" };
+  data.tournamentIds.push(id);
+  data.tournaments[id] = tournament;
+  for (const team of selected) {
+    team.status = "entered";
+    team.tournamentId = id;
+    team.rosterLocked = true;
+    team.matchStatus = "pending";
+  }
+  data.auditEvents.push({ at: tournament.createdAt, type: "tournament_created", tournamentId: id, adminId });
+  if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
+  return tournament;
 }
 
 export function conflicts(data: TournamentData, team: Team): Team[] {
