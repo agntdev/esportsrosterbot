@@ -42,6 +42,10 @@ async function beginIdentityStep(ctx: Ctx, teamId: string): Promise<void> {
     await ctx.reply("Эта команда недоступна для редактирования.");
     return;
   }
+  if (team.rosterLocked) {
+    await ctx.reply("Состав этой команды уже зафиксирован в турнире и недоступен для изменений.");
+    return;
+  }
   editSession(ctx).editingTeamId = team.id;
   editSession(ctx).editingSlot = undefined;
   editSession(ctx).pendingTeamName = undefined;
