@@ -49,7 +49,7 @@ function formatApplication(team: Pick<Team, "uniqueId" | "name" | "captainContac
   const starters = team.players.filter((player) => !player.isSubstitute);
   const subs = team.players.filter((player) => player.isSubstitute);
   const number = "uniqueId" in team ? team.uniqueId : uniqueId;
-  const lines = number ? [`🏆 Команда #${number} — ${team.name}`, `Капитан: ${starters[0]?.nickname ?? "не указан"}`, `Контакт капитана: ${team.captainContact}`, "Состав:"] : [`Команда: ${team.name}`, `Контакт капитана: ${team.captainContact}`, "Состав:"];
+  const lines = number ? [`🏆 Team #${number} — ${team.name}`, `Captain: ${starters[0]?.nickname ?? "не указан"}`, `Контакт капитана: ${team.captainContact}`, "Состав:"] : [`Команда: ${team.name}`, `Контакт капитана: ${team.captainContact}`, "Состав:"];
   lines.push(...starters.map((player, i) => `${i === 0 ? "Капитан" : `Игрок ${i + 1}`}: ${player.inGameId} — ${player.nickname}`));
   lines.push(subs.length ? `Замены: ${subs.map((player) => `${player.inGameId} — ${player.nickname}`).join("; ")}` : "Замены: нет");
   return lines.join("\n");
@@ -115,11 +115,11 @@ async function publish(ctx: Ctx): Promise<void> {
   }
   const review = overlap.length ? " Заявка отмечена для проверки конфликта ID." : "";
   const adminNote = sent ? "" : " Уведомление организатору пока не настроено.";
-  await ctx.reply(`${teamHeader(team)}\nКапитан: ${team.players[0]?.nickname ?? "не указан"}\nКоманда опубликована в списке команд.${review}${adminNote}`, { reply_markup: inlineKeyboard([[inlineButton("Список команд", "teams:show"), inlineButton("Редактировать команду", "edit:team")]]) });
+  await ctx.reply(`${teamHeader(team)}\nCaptain: ${team.players[0]?.nickname ?? "не указан"}\nКоманда опубликована в списке команд.${review}${adminNote}`, { reply_markup: inlineKeyboard([[inlineButton("Список команд", "teams:show"), inlineButton("Редактировать команду", "edit:team")]]) });
 }
 
-function duplicateName(data: Awaited<ReturnType<typeof readTournament>>, name: string): boolean {
-  return teams(data).some((team) => team.name.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
+function duplicateName(data: Awaited<ReturnType<typeof readTournament>>, name: string): Team | undefined {
+  return teams(data).find((team) => team.name.localeCompare(name, undefined, { sensitivity: "accent" }) === 0);
 }
 
 async function acceptName(ctx: Ctx, value: string, afterName: "starter_id" | "preview"): Promise<void> {
@@ -127,9 +127,10 @@ async function acceptName(ctx: Ctx, value: string, afterName: "starter_id" | "pr
   if (!draft) return;
   draft.name = value.slice(0, 128);
   session(ctx).afterName = afterName;
-  if (duplicateName(await readTournament(ctx), draft.name)) {
+  const existing = duplicateName(await readTournament(ctx), draft.name);
+  if (existing) {
     session(ctx).flow = "duplicate_name";
-    await ctx.reply("⚠️ Команда с таким названием уже зарегистрирована.\nВы можете оставить это название или выбрать другое название.", { reply_markup: inlineKeyboard([[inlineButton("Оставить название", "register:name:keep"), inlineButton("Выбрать другое название", "register:name:change")]]) });
+    await ctx.reply(`⚠️ Team ${teamIdentity(existing)} is already registered.\nYou can keep this name or choose another.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить название", "register:name:keep"), inlineButton("Выбрать другое название", "register:name:change")]]) });
     return;
   }
   if (afterName === "starter_id") {
