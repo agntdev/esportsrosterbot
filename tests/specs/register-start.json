@@ -34,12 +34,14 @@
       { "send": { "callback": "edit:slot:1" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите Game ID и никнейм для игрока 2 через |." } }] },
       { "send": { "text": "n222 | Orbit22" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Состав команды 🏆 Team #1 — Northwind обновлён." } }] },
       { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите название команды." } }] },
-      { "send": { "text": "northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "⚠️ 🏆 Team #1 — Northwind уже зарегистрирована.\nВы можете оставить это название или выбрать другое." } }] },
+      { "send": { "text": "northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором." } }] },
+      { "send": { "callback": "name:review" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Запрос на проверку отправлен организатору. После решения введите ник ещё раз." } }] },
       { "send": { "callback": "register:name:change" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите другое название команды." } }] },
       { "send": { "text": "Northwind Academy" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }] },
       { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите название команды." } }] },
-      { "send": { "text": "NORTHWIND" }, "expect": [{ "method": "sendMessage", "payload": { "text": "⚠️ 🏆 Team #1 — Northwind уже зарегистрирована.\nВы можете оставить это название или выбрать другое." } }] },
-      { "send": { "callback": "register:name:keep" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }] }
+      { "send": { "text": "NORTHWIND" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором." } }] },
+      { "send": { "callback": "register:name:change" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите другое название команды." } }] },
+      { "send": { "text": "Vanguard" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }] }
     ]
   }
 ]

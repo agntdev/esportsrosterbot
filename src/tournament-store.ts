@@ -15,10 +15,12 @@ export type Team = {
   status: TeamStatus;
   players: Player[];
 };
-export type AuditEvent = { at: number; type: "team_created" | "admin_notified"; teamId: string };
-export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[] };
+export type NameSubject = "team" | "player";
+export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
+export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected"; teamId?: string; reviewId?: string };
+export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }> };
 
-const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [] });
+const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [] });
 let clock: () => number = () => Date.now();
 
 /** Single injectable clock seam for generated default names and future cutoffs. */
@@ -69,6 +71,10 @@ function normalize(value: unknown): TournamentData {
     teamIds: ids,
     teams: storedTeams as Record<string, Team>,
     auditEvents: data.auditEvents ?? [],
+    nextNameReviewNumber: data.nextNameReviewNumber ?? 1,
+    nameReviews: data.nameReviews ?? {},
+    nameReviewIds: data.nameReviewIds ?? [],
+    nameOverrides: data.nameOverrides ?? [],
   };
 }
 
@@ -82,8 +88,8 @@ export function teamHeader(team: Pick<Team, "uniqueId" | "name">): string {
 }
 
 /** Keeps a small, durable audit trail without enumerating the store. */
-export function logEvent(data: TournamentData, type: AuditEvent["type"], teamId: string): void {
-  data.auditEvents.push({ at: now(), type, teamId });
+export function logEvent(data: TournamentData, type: AuditEvent["type"], teamId?: string, reviewId?: string): void {
+  data.auditEvents.push({ at: now(), type, ...(teamId ? { teamId } : {}), ...(reviewId ? { reviewId } : {}) });
   if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
 }
 
@@ -109,4 +115,43 @@ export function teams(data: TournamentData): Team[] {
 export function conflicts(data: TournamentData, team: Team): Team[] {
   const ids = new Set(team.players.map((player) => player.inGameId.toLowerCase()));
   return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && other.players.some((p) => ids.has(p.inGameId.toLowerCase())));
+}
+
+/** Removes cosmetic differences before tournament nickname comparisons. */
+export function normalizeNickname(value: string): string {
+  return value.trim().toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\p{L}\p{N}_-]/gu, "");
+}
+
+export function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= a.length; row += 1) {
+    const current = [row];
+    for (let column = 1; column <= b.length; column += 1) current[column] = Math.min(current[column - 1] + 1, previous[column] + 1, previous[column - 1] + (a[row - 1] === b[column - 1] ? 0 : 1));
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+export function nicknameSimilar(a: string, b: string): boolean {
+  const left = normalizeNickname(a); const right = normalizeNickname(b);
+  if (!left || !right) return false;
+  const distance = levenshtein(left, right); const longest = Math.max(left.length, right.length);
+  return longest <= 4 ? distance <= 1 : 1 - distance / longest >= 0.8;
+}
+
+export function nicknameConflict(data: TournamentData, candidate: string, subject: NameSubject, excludeTeamId?: string, localNames: string[] = []): boolean {
+  const normalized = normalizeNickname(candidate);
+  if (!normalized || data.nameOverrides.some((item) => item.subject === subject && item.normalized === normalized)) return false;
+  const existing = subject === "team"
+    ? teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").map((team) => team.name)
+    : teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").flatMap((team) => team.players.map((player) => player.nickname));
+  return [...existing, ...localNames].some((name) => nicknameSimilar(candidate, name));
+}
+
+export function createNameReview(data: TournamentData, requestedBy: string, candidate: string, subject: NameSubject): NameReview {
+  const id = `n${data.nextNameReviewNumber++}`;
+  const review: NameReview = { id, requestedBy, candidate, subject, status: "pending" };
+  data.nameReviewIds.push(id); data.nameReviews[id] = review; logEvent(data, "name_review_requested", undefined, id);
+  return review;
 }

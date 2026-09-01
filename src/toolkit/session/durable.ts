@@ -150,7 +150,7 @@ export class ChatDO {
     if (url.pathname === "/tournament") {
       if (request.method === "GET") {
         const data = await this.state.storage.get<unknown>("tournament-data");
-        return Response.json(data ?? { nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [] });
+        return Response.json(data ?? { nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [] });
       }
       if (request.method === "PUT") {
         await this.state.storage.put("tournament-data", await request.json());
