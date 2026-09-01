@@ -14,7 +14,7 @@
  */
 
 import type { StorageAdapter } from "grammy";
-import { applyRosterSlotUpdate, now, type RosterSlotUpdate, type TournamentData } from "../../tournament-store.js";
+import { now } from "../../tournament-store.js";
 
 // Minimal shapes so this file type-checks without pulling @cloudflare/workers-types
 // into the Node build. The real bindings are provided by the Workers runtime.
@@ -155,28 +155,11 @@ export class ChatDO {
     if (url.pathname === "/tournament") {
       if (request.method === "GET") {
         const data = await this.state.storage.get<unknown>("tournament-data");
-        return Response.json(data ?? { nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [], nextMatchNumber: 1, matches: {}, matchIds: [] });
+        return Response.json(data ?? { nextTeam: 1, nextConflict: 1, nextMatch: 1, teamIds: [], teams: {}, playerIds: [], players: {}, conflictIds: [], conflicts: {}, matchIds: [], matches: {}, users: {}, audit: [] });
       }
       if (request.method === "PUT") {
         await this.state.storage.put("tournament-data", await request.json());
         return new Response(null, { status: 204 });
-      }
-    }
-
-    // This combines read, validation, replacement, and persistence in one
-    // serialized Durable Object request. A replacement always assigns the
-    // requested zero-based index; it never inserts or shifts roster entries.
-    if (url.pathname === "/tournament/roster-slot" && request.method === "POST") {
-      try {
-        const update = (await request.json()) as RosterSlotUpdate;
-        const data = ((await this.state.storage.get<unknown>("tournament-data")) ?? {
-          nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [], nextMatchNumber: 1, matches: {}, matchIds: [],
-        }) as TournamentData;
-        applyRosterSlotUpdate(data, update);
-        await this.state.storage.put("tournament-data", data);
-        return Response.json(data);
-      } catch {
-        return new Response("invalid roster update", { status: 400 });
       }
     }
 
@@ -220,18 +203,7 @@ export class ChatDO {
     }
     await this.state.storage.put("reminders", rest);
     const events = (await this.state.storage.get<MatchStartEvent[]>("match-start-events")) ?? [];
-    const dueEvents = events.filter((event) => event.at <= instant);
     const remainingEvents = events.filter((event) => event.at > instant);
-    if (dueEvents.length) {
-      const data = await this.state.storage.get<TournamentData>("tournament-data");
-      if (data) {
-        for (const event of dueEvents) {
-          const match = data.matches?.[event.matchId];
-          if (match?.status === "scheduled") match.status = "in_progress";
-        }
-        await this.state.storage.put("tournament-data", data);
-      }
-    }
     await this.state.storage.put("match-start-events", remainingEvents);
     await this.rearm(rest, remainingEvents);
   }

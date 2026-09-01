@@ -14,7 +14,7 @@ import { webhookCallback, Composer, type Bot } from "grammy";
 import { buildBot, type Ctx } from "./bot.js";
 import { handlers } from "./handlers.generated.js";
 import { createDurableSessionStorage, type WorkerEnv } from "./toolkit/session/durable.js";
-import { matchExportCsv, matchExportRows, type TournamentData } from "./tournament-store.js";
+import { matchExportCsv, matchExportRows, type Data as TournamentData } from "./tournament-store.js";
 
 export { ChatDO } from "./toolkit/session/durable.js";
 

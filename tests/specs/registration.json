@@ -1,0 +1,20 @@
+[
+  { "name": "captain submits an exactly seven-player roster", "steps": [
+    { "send": { "callback": "register:start" }, "expect": [{ "method": "answerCallbackQuery" }, { "method": "sendMessage", "payload": { "text": "Enter your team name. Send - to use your Telegram name." } }] },
+    { "send": { "text": "Northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Enter the full name for Starter 1." } }] },
+    { "send": { "text": "Player One" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Enter the in-game ID for Starter 1." } }] },
+    { "send": { "text": "n1" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Enter the Telegram username for Starter 1, or send - to skip it." } }] },
+    { "send": { "text": "-" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Enter the full name for Starter 2." } }] },
+    { "send": { "text": "Player Two" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n2" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "Player Three" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n3" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "Player Four" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n4" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "Player Five" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n5" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "Sub One" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n6" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "Sub Two" }, "expect": [{ "method": "sendMessage" }] }, { "send": { "text": "n7" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "text": "-" }, "expect": [{ "method": "sendMessage" }] },
+    { "send": { "callback": "register:submit" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Your roster is submitted and pending approval." } }] },
+    { "send": { "callback": "edit:team" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Choose a player to edit for Northwind." } }] },
+    { "send": { "callback": "edit:player:0" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Send: full name | in-game ID | Telegram username. Use - for no username." } }] },
+    { "send": { "text": "Player One Updated | n10 | -" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Roster updated and returned to Pending review." } }] }
+  ] }
+]

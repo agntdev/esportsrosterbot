@@ -2,7 +2,6 @@ import { Composer } from "grammy";
 import { createBot, type BotContext, type CreateBotOptions } from "./toolkit/index.js";
 import { resolveSessionStorage } from "./toolkit/session/redis.js";
 import type { StorageAdapter } from "grammy";
-import ephemeralCleanup from "./handlers/00-ephemeral-cleanup.js";
 import adminDesk from "./handlers/admin-desk.js";
 import editTeam from "./handlers/edit-team.js";
 import help from "./handlers/help.js";
@@ -10,82 +9,14 @@ import registerStart from "./handlers/register-start.js";
 import start from "./handlers/start.js";
 import tournamentTable from "./handlers/tournament-table.js";
 
-// The per-chat session shape (ephemeral conversation state only). Extend as the
-// bot grows. Durable domain data must NOT live here — use the toolkit's
-// persistent storage (see AGENTS.md).
-export interface Session {
-  flow?: "team_name" | "starter" | "substitute" | "edit_player" | "price" | "match_link" | "match_time" | "match_team_filter";
-  draft?: { name: string; players: Array<{ inGameId: string; nickname: string; isSubstitute: boolean }> };
-  editingTeamId?: string;
-  editingSlot?: number;
-  managingTeamId?: string;
-  managingMatchId?: string;
-}
-
-/** Domain records use a global storage key; sessions remain per-chat forms. */
+export interface Session { flow?: string; draft?: { name: string; players: Array<{ fullName: string; inGameId: string; telegramUsername?: string; isSubstitute: boolean }> }; editIndex?: number; adminTeamId?: string; adminMatchId?: string; }
 export type Ctx = BotContext<Session> & { tournamentStorage?: StorageAdapter<unknown> };
-
-/**
- * BuildBotOptions lets a runtime-specific ENTRY POINT (never a feature handler)
- * override how the bot is assembled:
- *
- *  - `handlers`: a pre-loaded list of feature Composers. The Cloudflare Workers
- *    entry (src/worker.ts) passes these from a BUILD-TIME manifest, because the
- *    Workers runtime has no filesystem — `readdirSync` + dynamic `import()` only
- *    work under Node (dev, the test harness, and the Fly/long-poll entry). When
- *    omitted, buildBot falls back to the Node disk scan, so nothing on the Node
- *    path changes.
- *  - `storage`: an explicit grammY session StorageAdapter (Workers passes a
- *    Durable-Object-backed one; Node auto-selects Redis/in-memory).
- */
-export interface BuildBotOptions {
-  handlers?: Composer<Ctx>[];
-  storage?: StorageAdapter<Session>;
-  telemetryEnv?: CreateBotOptions<Session>["telemetryEnv"];
-  telemetryReporterOptions?: CreateBotOptions<Session>["telemetryReporterOptions"];
-}
-
-/**
- * buildBot — assembles the bot, AUTO-LOADS every feature handler from
- * src/handlers/, then registers the global fallback. Does NOT start the bot.
- * Add a feature by creating src/handlers/<name>.ts that default-exports a grammY
- * Composer — NEVER edit this file (concurrent feature PRs would conflict).
- *
- * Runtime-agnostic: the Node entry (src/index.ts) and the test harness call
- * `buildBot(token)` and get the disk-scanned handlers; the Workers entry
- * (src/worker.ts) calls `buildBot(token, { handlers, storage })` with a
- * build-time manifest because Workers has no filesystem.
- */
+export interface BuildBotOptions { handlers?: Composer<Ctx>[]; storage?: StorageAdapter<Session>; telemetryEnv?: CreateBotOptions<Session>["telemetryEnv"]; telemetryReporterOptions?: CreateBotOptions<Session>["telemetryReporterOptions"]; }
 export function buildBot(token: string, opts: BuildBotOptions = {}) {
-  // Resolve once so the global tournament key and grammY sessions share the
-  // same persistent adapter in Node, while Workers use their supplied adapter.
   const storage = opts.storage ?? resolveSessionStorage<Session>(undefined);
-  const bot = createBot<Session>(token, {
-    initial: () => ({}),
-    storage,
-    telemetryEnv: opts.telemetryEnv,
-    telemetryReporterOptions: opts.telemetryReporterOptions,
-  });
-  bot.use((ctx, next) => {
-    (ctx as Ctx).tournamentStorage = storage as StorageAdapter<unknown>;
-    return next();
-  });
-
-  // Registration is synchronous so a newly created bot can handle an update
-  // immediately. This is required by the tokenless replay harness and is safe
-  // in both Node and the Workers bundle.
-  const handlers = opts.handlers ?? [
-    ephemeralCleanup,
-    adminDesk,
-    editTeam,
-    help,
-    registerStart,
-    start,
-    tournamentTable,
-  ];
-  for (const h of handlers) bot.use(h);
-
-  bot.on("message", (ctx) => ctx.reply("Не удалось распознать сообщение. Откройте /help."));
-
+  const bot = createBot<Session>(token, { initial: () => ({ flow: undefined }), storage, telemetryEnv: opts.telemetryEnv, telemetryReporterOptions: opts.telemetryReporterOptions });
+  bot.use((ctx, next) => { (ctx as Ctx).tournamentStorage = storage as StorageAdapter<unknown>; return next(); });
+  for (const handler of opts.handlers ?? [start, help, registerStart, editTeam, adminDesk, tournamentTable]) bot.use(handler);
+  bot.on("message", (ctx) => ctx.reply("I couldn’t use that message. Open /start and choose an option."));
   return bot;
 }

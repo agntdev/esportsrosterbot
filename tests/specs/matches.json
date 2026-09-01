@@ -1,0 +1,5 @@
+[
+  { "name": "public matches table has useful empty states", "steps": [
+    { "send": { "text": "/matches" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Teams\nNo teams registered yet.\n\nMatches\nNo matches scheduled yet." } }] }
+  ] }
+]
