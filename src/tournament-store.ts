@@ -68,7 +68,9 @@ export async function readTournament(ctx: Ctx): Promise<TournamentData> {
     const response = await ns.get(ns.idFromName("tournament:data")).fetch("https://do/tournament", { method: "GET" });
     if (response.ok) return normalize(await response.json());
   }
-  const value = ctx.session.tournamentData;
+  // This is intentionally outside the current chat's session: organizers,
+  // captains, and public viewers must all read one tournament record.
+  const value = await ctx.tournamentStorage?.read("tournament:data");
   return value && typeof value === "object" ? normalize(value) : initial();
 }
 
@@ -164,7 +166,8 @@ export async function writeTournament(ctx: Ctx, data: TournamentData): Promise<v
     if (!response.ok) throw new Error("Tournament records could not be saved.");
     return;
   }
-  ctx.session.tournamentData = normalized;
+  if (!ctx.tournamentStorage) throw new Error("Tournament storage is unavailable.");
+  await ctx.tournamentStorage.write("tournament:data", normalized);
 }
 
 /** Arms Worker alarms for scheduled fixtures. Reading the table still reconciles
@@ -251,6 +254,7 @@ export function eligibleTeams(data: TournamentData): Team[] {
 }
 
 export function createTournament(data: TournamentData, selected: Team[], adminId: string): Tournament {
+  if (selected.length < 2) throw new Error("At least two eligible teams are required.");
   const id = `tr${data.nextTournamentNumber++}`;
   const bracketSize = nextBracketSize(selected.length);
   const bracketRounds = bracketSize > 1 ? Math.ceil(Math.log2(bracketSize)) : 0;
@@ -330,8 +334,16 @@ function advance(data: TournamentData, tournament: Tournament, source: MatchTabl
   if (!parent) {
     const number = data.nextMatchNumber++;
     parent = { id: `m${number}`, number, tournamentId: tournament.id, stage: stageName(parentRound, total), team1Id: winnerId, timezone: source.timezone || "Europe/Moscow", status: "scheduled", bracketRound: parentRound, bracketSlot: parentSlot };
-    const base = matchStartEpoch(source) ?? now();
-    scheduleMatch(parent, new Date(base + MATCH_DURATION_MS).toISOString());
+    // A next-round fixture cannot begin until every child fixture in its half
+    // has ended.  This also prevents a winner from being placed into a match
+    // that is already marked in progress while its prospective opponent is
+    // still playing.
+    const childSlots = [parentSlot * 2, parentSlot * 2 + 1];
+    const childEnds = tournamentMatches(data, tournament.id)
+      .filter((item) => matchRound(item) === round && childSlots.includes(matchSlot(item)))
+      .map((item) => (matchStartEpoch(item) ?? now()) + MATCH_DURATION_MS);
+    const base = Math.max(matchStartEpoch(source) ?? now(), ...childEnds);
+    scheduleMatch(parent, new Date(base).toISOString());
     data.matchIds.push(parent.id); data.matches[parent.id] = parent;
   } else if (!parent.team1Id) parent.team1Id = winnerId;
   else if (!parent.team2Id && parent.team1Id !== winnerId) parent.team2Id = winnerId;
@@ -509,13 +521,9 @@ export function nicknameConflict(data: TournamentData, candidate: string, subjec
     ? teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").map((team) => stringField(team.name))
     : teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").flatMap((team) => (team.players ?? []).map((player) => stringField(player?.nickname)));
   const names = [...existing, ...localNames].map(normalizeNickname).filter(Boolean);
-  if (!names.includes(normalized)) {
-    // Do not include the nickname itself: this records lookup misses without
-    // retaining player data in logs.
-    console.info("[tournament] nickname lookup found no registered record");
-    return false;
-  }
-  return true;
+  // A lookup miss is normal during roster entry, not an operational event.
+  // Keeping it out of the logs makes real storage and callback failures visible.
+  return names.includes(normalized);
 }
 
 export function createNameReview(data: TournamentData, requestedBy: string, candidate: string, subject: NameSubject): NameReview {
