@@ -39,19 +39,19 @@ function optionalKeyboard() { return inlineKeyboard([[inlineButton("Добави
 function previewKeyboard() { return inlineKeyboard([[inlineButton("Подтвердить", "register:confirm"), inlineButton("Редактировать", "register:edit")], [inlineButton("Отмена", "menu:main")]]); }
 function editMenuKeyboard() {
   return inlineKeyboard([
-    [inlineButton("Team name", "register:edit:name"), inlineButton("Captain", "register:edit:captain")],
-    [inlineButton("Player 1", "register:edit:player:0"), inlineButton("Player 2", "register:edit:player:1")],
-    [inlineButton("Player 3", "register:edit:player:2"), inlineButton("Player 4", "register:edit:player:3")],
-    [inlineButton("Player 5", "register:edit:player:4"), inlineButton("Sub 1", "register:edit:sub:0")],
-    [inlineButton("Sub 2", "register:edit:sub:1")],
-    [inlineButton("Back to preview", "register:preview")],
+    [inlineButton("Название команды", "register:edit:name"), inlineButton("Капитан", "register:edit:captain")],
+    [inlineButton("Игрок 1", "register:edit:player:0"), inlineButton("Игрок 2", "register:edit:player:1")],
+    [inlineButton("Игрок 3", "register:edit:player:2"), inlineButton("Игрок 4", "register:edit:player:3")],
+    [inlineButton("Игрок 5", "register:edit:player:4"), inlineButton("Замена 1", "register:edit:sub:0")],
+    [inlineButton("Замена 2", "register:edit:sub:1")],
+    [inlineButton("К просмотру", "register:preview")],
   ]);
 }
 function formatApplication(team: Pick<Team, "uniqueId" | "name" | "captainContact" | "players"> | Draft, uniqueId?: number): string {
   const starters = team.players.filter((player) => !player.isSubstitute);
   const subs = team.players.filter((player) => player.isSubstitute);
   const number = "uniqueId" in team ? team.uniqueId : uniqueId;
-  const lines = number ? [`🏆 Team #${number} — ${team.name}`, `Captain: ${starters[0]?.nickname ?? "не указан"}`, `Контакт капитана: ${team.captainContact}`, "Состав:"] : [`Команда: ${team.name}`, `Контакт капитана: ${team.captainContact}`, "Состав:"];
+  const lines = number ? [`🏆 Команда #${number} — ${team.name}`, `Капитан: ${starters[0]?.nickname ?? "не указан"}`, `Контакт капитана: ${team.captainContact}`, "Состав:"] : [`Команда: ${team.name}`, `Контакт капитана: ${team.captainContact}`, "Состав:"];
   lines.push(...starters.map((player, i) => `${i === 0 ? "Капитан" : `Игрок ${i + 1}`}: ${player.inGameId} — ${player.nickname}`));
   lines.push(subs.length ? `Замены: ${subs.map((player) => `${player.inGameId} — ${player.nickname}`).join("; ")}` : "Замены: нет");
   return lines.join("\n");
@@ -124,7 +124,7 @@ async function publish(ctx: Ctx): Promise<void> {
   }
   const review = overlap.length ? " Заявка отмечена для проверки конфликта ID." : "";
   const adminNote = sent ? "" : " Уведомление организатору пока не настроено.";
-  await ctx.reply(`${teamHeader(team)}\nCaptain: ${team.players[0]?.nickname ?? "не указан"}\nКоманда опубликована в списке команд.${review}${adminNote}`, { reply_markup: inlineKeyboard([[inlineButton("Список команд", "teams:show"), inlineButton("Редактировать команду", "edit:team")]]) });
+  await ctx.reply(`${teamHeader(team)}\nКапитан: ${team.players[0]?.nickname ?? "не указан"}\nКоманда опубликована в списке команд.${review}${adminNote}`, { reply_markup: inlineKeyboard([[inlineButton("Список команд", "teams:show"), inlineButton("Редактировать команду", "edit:team")]]) });
 }
 
 async function acceptName(ctx: Ctx, value: string, afterName: "starter_id" | "preview"): Promise<void> {
@@ -152,7 +152,7 @@ composer.callbackQuery(["register:edit", "register:restart"], async (ctx) => {
     await ctx.reply("Сначала откройте просмотр заявки.");
     return;
   }
-  await ctx.reply("Choose a field to update.", { reply_markup: editMenuKeyboard() });
+  await ctx.reply("Выберите поле для изменения.", { reply_markup: editMenuKeyboard() });
 });
 composer.callbackQuery("register:edit:name", async (ctx) => {
   await ctx.answerCallbackQuery();
