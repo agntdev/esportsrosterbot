@@ -33,12 +33,6 @@ composer.command("start", async (ctx) => {
   await sendMenu(ctx);
 });
 
-// A recoverable menu is deliberately a shortcut command: it restores the
-// button-first surface after a user has deleted an earlier menu message.
-composer.command("menu", async (ctx) => {
-  await sendMenu(ctx);
-});
-
 composer.hears("Главное меню", async (ctx) => {
   await sendMenu(ctx);
 });
