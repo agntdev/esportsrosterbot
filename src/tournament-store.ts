@@ -15,13 +15,15 @@ export type Team = {
   /** Set once a team is included in a published tournament. */
   tournamentId?: string;
   rosterLocked?: boolean;
+  /** IDs an organizer explicitly allowed to be shared by the affected teams. */
+  allowedDuplicateIds?: string[];
   status: TeamStatus;
   players: Player[];
 };
 export type NameSubject = "team" | "player";
 export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
 export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "active" };
-export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string };
+export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created" | "conflict_resolved"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string; resolution?: "team1" | "team2" | "both"; relatedTeamIds?: string[] };
 export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[] };
 export type RosterSlotUpdate = { teamId: string; slot: number; player?: Player };
 
@@ -200,8 +202,22 @@ export function conflicts(data: TournamentData, team: Team): Team[] {
   if (ids.size === 0) return [];
   return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && (other.players ?? []).some((p) => {
     const id = stringField(p?.inGameId).toLocaleLowerCase();
-    return Boolean(id) && ids.has(id);
+    return Boolean(id) && ids.has(id) && !isAllowedDuplicate(team, other, id);
   }));
+}
+
+function isAllowedDuplicate(team: Team, other: Team, id: string): boolean {
+  return (team.allowedDuplicateIds ?? []).includes(id) && (other.allowedDuplicateIds ?? []).includes(id);
+}
+
+/** Records an intentional shared ID on every affected roster. */
+export function allowDuplicateIds(affected: Team[], ids: string[]): void {
+  const normalized = [...new Set(ids.map((id) => stringField(id).toLocaleLowerCase()).filter(Boolean))];
+  for (const team of affected) {
+    const allowed = new Set((team.allowedDuplicateIds ?? []).map((id) => id.toLocaleLowerCase()));
+    for (const id of normalized) allowed.add(id);
+    team.allowedDuplicateIds = [...allowed];
+  }
 }
 
 /** Removes cosmetic differences before tournament nickname comparisons. */

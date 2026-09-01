@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, isOwner, registerMainMenuItem, requireOwner } from "../toolkit/index.js";
-import { activeTournament, conflicts, createTournament, eligibleTeams, logEvent, normalizeNickname, readTournament, teamHeader, teamIdentity, teams, type Team, writeTournament } from "../tournament-store.js";
+import { activeTournament, allowDuplicateIds, conflicts, createTournament, eligibleTeams, logEvent, normalizeNickname, now, readTournament, teamHeader, teamIdentity, teams, type Team, writeTournament } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Панель администратора", data: "admin:desk", order: 90 });
 const composer = new Composer<Ctx>();
@@ -52,7 +52,7 @@ composer.callbackQuery("admin:tournament:confirm", async (ctx) => {
   await ctx.reply(confirmation, { reply_markup: inlineKeyboard([[inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) });
 });
 composer.callbackQuery("admin:price", async (ctx) => { if (!(await owner(ctx))) return; ctx.session.flow = "price"; await ctx.reply("Введите цену регистрации целым числом. Введите 0, чтобы оставить регистрацию бесплатной.", { reply_markup: input }); });
-composer.callbackQuery("admin:conflicts", async (ctx) => { if (!(await owner(ctx))) return; const list = teams(await readTournament(ctx)).filter((team) => team.status === "pending_conflict" || team.status === "needs_correction"); await ctx.reply(list.length ? "Выберите конфликт состава для решения." : "Нет конфликтов состава, ожидающих проверки.", { reply_markup: list.length ? inlineKeyboard([...list.slice(0, 7).map((team) => [inlineButton(teamIdentity(team).slice(0, 24), `admin:conf:${team.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
+composer.callbackQuery("admin:conflicts", async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const list = teams(data).filter((team) => conflicts(data, team).length > 0); await ctx.reply(list.length ? "Выберите конфликт состава для решения." : "Нет конфликтов состава, ожидающих проверки.", { reply_markup: list.length ? inlineKeyboard([...list.slice(0, 7).map((team) => [inlineButton(teamIdentity(team).slice(0, 24), `admin:conf:${team.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
 composer.callbackQuery("admin:names", async (ctx) => {
   if (!(await owner(ctx))) return;
   const data = await readTournament(ctx); const pending = data.nameReviewIds.map((id) => data.nameReviews[id]).filter((review) => review?.status === "pending");
@@ -78,8 +78,53 @@ composer.callbackQuery(/^admin:name:(approve|reject):(n\d+)$/, async (ctx) => {
   }
   await ctx.reply(approved ? `Никнейм ${review.candidate} принят.` : `Никнейм ${review.candidate} отклонён.`, { reply_markup: deskKeyboard() });
 });
-composer.callbackQuery(/^admin:conf:(t\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const team = data.teams[ctx.match?.[1] ?? ""]; if (!team) { await ctx.reply("Эта команда больше недоступна."); return; } const overlap = conflicts(data, team); await ctx.reply(overlap.length ? `${teamHeader(team)} конфликтует с ${overlap.map(teamIdentity).join(", ")}. Выберите заявку, которую нужно принять.` : `${teamHeader(team)} больше не имеет конфликта состава.`, { reply_markup: overlap.length ? inlineKeyboard([[inlineButton("Принять эту команду", `conf:new:${team.id}`), inlineButton("Принять текущую команду", `conf:old:${team.id}`)]]) : deskKeyboard() }); });
-composer.callbackQuery(/^conf:(new|old):(t\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const team = data.teams[ctx.match?.[2] ?? ""]; if (!team) { await ctx.reply("Этот конфликт больше недоступен."); return; } const overlap = conflicts(data, team); if (ctx.match?.[1] === "new") { team.status = "confirmed"; for (const other of overlap) other.status = "needs_correction"; } else team.status = "rejected"; await writeTournament(ctx, data); await ctx.reply(ctx.match?.[1] === "new" ? `${teamIdentity(team)} принята. Конфликтующий состав ожидает правок.` : `${teamIdentity(team)} отклонена. Текущий состав остаётся принят.`, { reply_markup: deskKeyboard() }); });
+function sharedIds(team: Team, other: Team): string[] {
+  const theirs = new Set(other.players.map((player) => player.inGameId.trim().toLocaleLowerCase()));
+  return team.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter((id) => id && theirs.has(id));
+}
+function conflictChoices(team: Team, other: Team) {
+  return inlineKeyboard([
+    [inlineButton("Назначить команде 1", `conf:choose:team1:${team.id}`)],
+    [inlineButton("Назначить команде 2", `conf:choose:team2:${team.id}`)],
+    [inlineButton("Оставить обеим", `conf:choose:both:${team.id}`)],
+    [inlineButton("К панели", "admin:desk")],
+  ]);
+}
+function resolutionLabel(choice: "team1" | "team2" | "both"): string {
+  return choice === "team1" ? "ID останется у команды 1, команде 2 потребуется исправить состав" : choice === "team2" ? "ID останется у команды 2, команде 1 потребуется исправить состав" : "ID останется у обеих команд; это намеренно разрешённый дубликат";
+}
+composer.callbackQuery(/^admin:conf:(t\d+)$/, async (ctx) => {
+  if (!(await owner(ctx))) return;
+  const data = await readTournament(ctx); const team = data.teams[ctx.match?.[1] ?? ""];
+  if (!team) { await ctx.reply("Эта команда больше недоступна."); return; }
+  const other = conflicts(data, team)[0];
+  if (!other) { await ctx.reply(`${teamHeader(team)} больше не имеет конфликта состава.`, { reply_markup: deskKeyboard() }); return; }
+  await ctx.reply(`${teamHeader(team)} конфликтует с ${teamIdentity(other)}.\n\nКоманда 1 — эта заявка. Команда 2 — конфликтующая заявка. Назначение одной команде потребует правок от другой; «Оставить обеим» намеренно разрешает одинаковый Game ID.`, { reply_markup: conflictChoices(team, other) });
+});
+composer.callbackQuery(/^conf:choose:(team1|team2|both):(t\d+)$/, async (ctx) => {
+  if (!(await owner(ctx))) return;
+  const choice = ctx.match?.[1] as "team1" | "team2" | "both"; const teamId = ctx.match?.[2] ?? "";
+  const data = await readTournament(ctx); const team = data.teams[teamId]; const other = team ? conflicts(data, team)[0] : undefined;
+  if (!team || !other) { await ctx.reply("Этот конфликт больше недоступен.", { reply_markup: deskKeyboard() }); return; }
+  await ctx.reply(`Подтвердите решение: ${resolutionLabel(choice)}.`, { reply_markup: inlineKeyboard([[inlineButton("Подтвердить", `conf:confirm:${choice}:${team.id}`), inlineButton("Отмена", "admin:conflicts")]]) });
+});
+composer.callbackQuery(/^conf:confirm:(team1|team2|both):(t\d+)$/, async (ctx) => {
+  if (!(await owner(ctx))) return;
+  const choice = ctx.match?.[1] as "team1" | "team2" | "both"; const data = await readTournament(ctx); const team = data.teams[ctx.match?.[2] ?? ""]; const other = team ? conflicts(data, team)[0] : undefined;
+  if (!team || !other) { await ctx.reply("Этот конфликт больше недоступен.", { reply_markup: deskKeyboard() }); return; }
+  const affected = [team, other];
+  if (choice === "team1") { team.status = "confirmed"; other.status = "needs_correction"; }
+  else if (choice === "team2") { team.status = "needs_correction"; other.status = "confirmed"; }
+  else { allowDuplicateIds(affected, sharedIds(team, other)); team.status = "confirmed"; other.status = "confirmed"; }
+  data.auditEvents.push({ at: now(), type: "conflict_resolved", teamId: team.id, relatedTeamIds: affected.map((item) => item.id), adminId: String(ctx.from?.id ?? ctx.chat?.id ?? ""), resolution: choice });
+  if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
+  await writeTournament(ctx, data);
+  const adminName = ctx.from?.username ? `@${ctx.from.username}` : "организатор";
+  for (const affectedTeam of affected) {
+    try { await ctx.api.sendMessage(affectedTeam.captainTelegramId, `Организатор ${adminName} подтвердил решение по конфликту ID: ${resolutionLabel(choice)}.`); } catch { /* A blocked captain must not interrupt notifications. */ }
+  }
+  await ctx.reply(`Решение применено: ${resolutionLabel(choice)}. Капитаны уведомлены.`, { reply_markup: deskKeyboard() });
+});
 composer.callbackQuery("admin:matches", async (ctx) => { if (!(await owner(ctx))) return; const list = teams(await readTournament(ctx)).filter((team) => team.status === "confirmed" || team.status === "entered"); await ctx.reply(list.length ? "Выберите команду для обновления." : "Нет принятых команд для обновления матчей.", { reply_markup: list.length ? inlineKeyboard([...list.slice(0, 7).map((team) => [inlineButton(teamIdentity(team).slice(0, 24), `admin:match:${team.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
 composer.callbackQuery(/^admin:match:(t\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const teamId = ctx.match?.[1]; const data = await readTournament(ctx); const team = teamId ? data.teams[teamId] : undefined; if (!team) { await ctx.reply("Эта команда больше недоступна."); return; } ctx.session.managingTeamId = team.id; await ctx.reply(`Обновите ${teamIdentity(team)}.`, { reply_markup: inlineKeyboard([[inlineButton("Прикрепить ссылку на матч", "admin:link")], [inlineButton("Отметить победу", "admin:result:won"), inlineButton("Отметить поражение", "admin:result:lost")], [inlineButton("Отметить ожидание", "admin:result:pending")]]) }); });
 composer.callbackQuery("admin:link", async (ctx) => { if (!(await owner(ctx))) return; if (!ctx.session.managingTeamId) { await ctx.reply("Сначала выберите команду в разделе управления матчами."); return; } ctx.session.flow = "match_link"; await ctx.reply("Отправьте полную ссылку на матч, начиная с https://.", { reply_markup: input }); });
