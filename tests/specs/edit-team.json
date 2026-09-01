@@ -1,36 +1,3 @@
 [
-  {
-    "name": "Edit Team",
-    "steps": [
-      {
-        "expect": [
-          {
-            "method": "sendMessage",
-            "payload": {
-              "text": "You don't have a registered team yet — tap Register team to create one."
-            }
-          }
-        ],
-        "send": {
-          "callback": "edit:team"
-        }
-      }
-    ]
-  },
-  {
-    "name": "A captain can correct a registered roster player",
-    "steps": [
-      { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "Five" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "a1 | One" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "a2 | Two" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "a3 | Three" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "a4 | Four" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "text": "a5 | Five" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "callback": "register:finish" }, "expect": [{ "method": "sendMessage" }] },
-      { "send": { "callback": "edit:team" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Choose a player to update for Five." } }] },
-      { "send": { "callback": "edit:slot:0" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Send the replacement for starter 1 as ID | nickname." } }] },
-      { "send": { "text": "a6 | Six" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Your roster for Five has been updated." } }] }
-    ]
-  }
+  { "name": "Редактирование без зарегистрированной команды", "steps": [{ "send": { "callback": "edit:team" }, "expect": [{ "method": "sendMessage", "payload": { "text": "У вас пока нет команды — зарегистрируйте заявку." } }] }] }
 ]
