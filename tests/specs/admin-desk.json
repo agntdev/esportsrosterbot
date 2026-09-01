@@ -23,5 +23,11 @@
     "steps": [
       { "send": { "callback": "admin:tournament:start" }, "expect": [{ "method": "answerCallbackQuery" }, { "method": "sendMessage", "payload": { "text": "Доступ администратора ещё не настроен." } }] }
     ]
+  },
+  {
+    "name": "Подтверждение результата закрыто без настроенного доступа администратора",
+    "steps": [
+      { "send": { "callback": "admin:match:confirm:t1:m1" }, "expect": [{ "method": "answerCallbackQuery" }, { "method": "sendMessage", "payload": { "text": "Доступ администратора ещё не настроен." } }] }
+    ]
   }
 ]
