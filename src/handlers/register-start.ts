@@ -93,7 +93,7 @@ async function notifyAdmin(ctx: Ctx, data: Awaited<ReturnType<typeof readTournam
   if (!admin) return false;
   try {
     await ctx.api.sendMessage(admin, `${formatApplication(team)}${conflictDetails(data, team)}`, {
-      reply_markup: conflicts(data, team).length ? inlineKeyboard([[inlineButton("Оставить новую", `conf:new:${team.id}`), inlineButton("Оставить прежнюю", `conf:old:${team.id}`)]]) : undefined,
+      reply_markup: conflicts(data, team).length ? inlineKeyboard([[inlineButton("Открыть конфликт", `admin:conf:${team.id}`)]]) : undefined,
     });
     logEvent(data, "admin_notified", team.id);
     return true;
