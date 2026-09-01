@@ -32,6 +32,9 @@ export type MatchTable = {
   stage: string;
   team1Id: string;
   team2Id?: string;
+  /** ISO8601 UTC timestamps. `scheduledTime` is retained only to migrate old records. */
+  startTime?: string;
+  endTime?: string;
   scheduledTime?: number;
   timezone: string;
   serverLink?: string;
@@ -90,6 +93,15 @@ function normalize(value: unknown): TournamentData {
   const highest = Math.max(...used, 0);
   const storedMatches = data.matches ?? {};
   const storedMatchIds = data.matchIds ?? [];
+  // Older deployments used a local epoch field. Convert it once so every new
+  // scheduling path has an explicit, portable start and end time.
+  for (const matchId of storedMatchIds) {
+    const match = storedMatches[matchId];
+    if (match?.scheduledTime && !match.startTime) {
+      match.startTime = new Date(match.scheduledTime).toISOString();
+      match.endTime = new Date(match.scheduledTime + 60 * 60 * 1000).toISOString();
+    }
+  }
   let nextMatchNumber = data.nextMatchNumber ?? 1;
   for (const matchId of storedMatchIds) nextMatchNumber = Math.max(nextMatchNumber, (storedMatches[matchId]?.number ?? 0) + 1);
   // Migration for tournaments created before pairings were introduced.  The
@@ -252,6 +264,35 @@ export function tournamentMatches(data: TournamentData, tournamentId?: string): 
   return data.matchIds.map((id) => data.matches[id]).filter((match): match is MatchTable => Boolean(match) && (!tournamentId || match.tournamentId === tournamentId));
 }
 
+export const MATCH_DURATION_MS = 60 * 60 * 1000;
+
+/** Parses a Moscow tournament date and 24-hour time into an ISO UTC instant. */
+export function parseMatchStart(date: string, time: string): string | undefined {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const timeMatch = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!dateMatch || !timeMatch) return undefined;
+  const [, year, month, day] = dateMatch;
+  const [, hour, minute] = timeMatch;
+  const local = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)));
+  if (local.getUTCFullYear() !== Number(year) || local.getUTCMonth() !== Number(month) - 1 || local.getUTCDate() !== Number(day) || Number(hour) > 23 || Number(minute) > 59) return undefined;
+  // Europe/Moscow is UTC+3 and has no daylight-saving transition.
+  return new Date(local.getTime() - 3 * 60 * 60 * 1000).toISOString();
+}
+
+export function matchStartEpoch(match: MatchTable): number | undefined {
+  if (match.startTime) { const value = Date.parse(match.startTime); if (!Number.isNaN(value)) return value; }
+  return match.scheduledTime;
+}
+
+export function scheduleMatch(match: MatchTable, startTime: string): void {
+  const start = Date.parse(startTime);
+  if (Number.isNaN(start)) throw new Error("Match start time is invalid.");
+  match.startTime = new Date(start).toISOString();
+  match.endTime = new Date(start + MATCH_DURATION_MS).toISOString();
+  // Preserve compatibility with legacy API consumers during rollout.
+  match.scheduledTime = start;
+}
+
 export function captainIdentifier(team: Team): string {
   const contact = team.captainContact?.trim();
   return contact?.startsWith("@") ? contact : `id${team.captainTelegramId}`;
@@ -260,12 +301,12 @@ export function captainIdentifier(team: Team): string {
 export function matchExportRows(data: TournamentData, tournamentId?: string): Array<Record<string, string | number>> {
   return tournamentMatches(data, tournamentId).map((match) => {
     const team1 = data.teams[match.team1Id]; const team2 = match.team2Id ? data.teams[match.team2Id] : undefined;
-    return { team1_name: team1?.name ?? "", team1_captain_id: team1?.captainTelegramId ?? "", team2_name: team2?.name ?? "", team2_captain_id: team2?.captainTelegramId ?? "", scheduled_time: match.scheduledTime ?? "", timezone: match.timezone, status: match.status, result: match.result ?? "" };
+    return { team1_name: team1?.name ?? "", team1_captain_id: team1?.captainTelegramId ?? "", team2_name: team2?.name ?? "", team2_captain_id: team2?.captainTelegramId ?? "", start_time: match.startTime ?? "", end_time: match.endTime ?? "", timezone: match.timezone, status: match.status, result: match.result ?? "" };
   });
 }
 
 export function matchExportCsv(data: TournamentData, tournamentId?: string): string {
-  const fields = ["team1_name", "team1_captain_id", "team2_name", "team2_captain_id", "scheduled_time", "timezone", "status", "result"];
+  const fields = ["team1_name", "team1_captain_id", "team2_name", "team2_captain_id", "start_time", "end_time", "timezone", "status", "result"];
   const quote = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
   return [fields.join(","), ...matchExportRows(data, tournamentId).map((row) => fields.map((field) => quote(row[field] ?? "")).join(","))].join("\n");
 }

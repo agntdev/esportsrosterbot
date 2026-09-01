@@ -11,4 +11,11 @@
       { "send": { "callback": "admin:tournament:compose" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Доступ администратора ещё не настроен." } }] }
     ]
   }
+  ,
+  {
+    "name": "Назначение расписания закрыто без настроенного доступа администратора",
+    "steps": [
+      { "send": { "callback": "admin:match:time:m1" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Доступ администратора ещё не настроен." } }] }
+    ]
+  }
 ]
