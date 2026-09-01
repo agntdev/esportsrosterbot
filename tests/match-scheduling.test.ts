@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MATCH_DURATION_MS, parseMatchStart, scheduleMatch, type MatchTable } from "../src/tournament-store";
+import { MATCH_DURATION_MS, matchExportRows, parseMatchStart, scheduleMatch, type MatchTable } from "../src/tournament-store";
 import { formatTime, matchLine } from "../src/handlers/tournament-table";
 import { buildBot } from "../src/bot";
 import { formatSuiteResult, runSpecs, type BotSpec } from "../src/toolkit/harness/run-specs";
@@ -26,6 +26,13 @@ describe("match scheduling", () => {
     expect(text).toContain("Команда 1 (капитан): Alpha (капитан: id11)");
     expect(text).toContain("Начало: 10.09.2026 20:00");
     expect(text).toContain("Окончание: 10.09.2026 21:00");
+  });
+
+  it("exports the date, start, and calculated end time for public consumers", () => {
+    const match: MatchTable = { id: "m1", number: 1, tournamentId: "tr1", stage: "Основной этап", team1Id: "t1", startTime: "2026-09-10T17:00:00.000Z", endTime: "2026-09-10T18:00:00.000Z", timezone: "Europe/Moscow", status: "scheduled" };
+    const rows = matchExportRows({ nextTeamNumber: 2, registrationPrice: 0, teamIds: ["t1"], teams: { t1: { id: "t1", uniqueId: 1, name: "Alpha", captainTelegramId: "11", captainContact: "", paid: true, status: "entered", players: [] } }, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 2, tournaments: {}, tournamentIds: [], nextMatchNumber: 2, matches: { m1: match }, matchIds: ["m1"] });
+    expect(rows[0]).toMatchObject({ date: "2026-09-10", start_time: "2026-09-10T17:00:00.000Z", end_time: "2026-09-10T18:00:00.000Z" });
+    expect(formatTime(undefined, "Europe/Moscow")).toBe("TBD");
   });
 
   it("requires a date and valid 24-hour time, then schedules the remaining fixture", async () => {

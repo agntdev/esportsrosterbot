@@ -46,7 +46,12 @@ composer.hears("Главное меню", async (ctx) => {
 // "Back to menu" — re-render the main menu in place from any sub-view.
 composer.callbackQuery("menu:main", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(WELCOME, { reply_markup: mainMenuKeyboard() });
+  try {
+    await ctx.editMessageText(WELCOME, { reply_markup: mainMenuKeyboard() });
+  } catch (error) {
+    // Repeated taps leave the menu intact; Telegram reports those as a 400.
+    if (!String(error).includes("message is not modified")) throw error;
+  }
 });
 
 export default composer;
