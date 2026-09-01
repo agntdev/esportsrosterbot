@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { inlineButton, inlineKeyboard, registerMainMenuItem, urlButton } from "../toolkit/index.js";
-import { activeTournament, captainIdentifier, readTournament, teamIdentity, teams, tournamentMatches, type MatchTable, type Player, type Team, type TournamentData } from "../tournament-store.js";
+import { activeTournament, captainIdentifier, matchStartEpoch, readTournament, teamIdentity, teams, tournamentMatches, type MatchTable, type Player, type Team, type TournamentData } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Список команд", data: "teams:show", order: 30 });
 registerMainMenuItem({ label: "Таблица матчей", data: "matches:show", order: 40 });
@@ -14,22 +14,24 @@ const view = (ctx: Ctx): MatchViewSession => ctx.session as unknown as MatchView
 function status(value: string): string { return value === "entered" ? "В турнире" : value === "confirmed" ? "Подтверждена" : value === "awaiting_payment" ? "Ожидает оплаты" : value === "pending_conflict" ? "На проверке" : value === "needs_correction" ? "Нужна правка" : "Отклонена"; }
 function teamText(list: Team[]): string { return list.length ? `Команды\n\n${list.map((team) => `${teamIdentity(team)}\nСтатус: ${status(team.status)}`).join("\n\n")}` : "Команд пока нет — зарегистрируйте первую заявку."; }
 function teamDisplay(team: Team | undefined): string { return team ? `${team.name} (капитан: ${captainIdentifier(team)})` : "Не назначено"; }
-function formatTime(timestamp: number | undefined, timezone: string): string {
-  if (!timestamp) return "Не назначено";
+function formatTime(timestamp: string | number | undefined, timezone: string): string {
+  if (timestamp === undefined) return "Не назначено";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Не назначено";
   const parts = new Intl.DateTimeFormat("ru-RU", { timeZone: timezone, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(timestamp));
   const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return `${value("day")}.${value("month")}.${value("year")} ${value("hour")}:${value("minute")}`;
 }
 function matchLine(data: TournamentData, match: MatchTable): string {
   const team1 = data.teams[match.team1Id]; const team2 = match.team2Id ? data.teams[match.team2Id] : undefined;
-  return [`№ матча: ${match.number}`, `Этап: ${match.stage}`, `Команда 1 (капитан): ${teamDisplay(team1)}`, `Команда 2 (капитан): ${teamDisplay(team2)}`, `Дата и время: ${formatTime(match.scheduledTime, match.timezone)}`, `Сервер / Ссылка: ${match.serverLink ?? "Не назначено"}`, `Статус: ${match.status === "completed" ? "Завершён" : "Запланирован"}`, `Результат: ${match.result ?? "Не определён"}`].join("\n");
+  return [`№ матча: ${match.number}`, `Этап: ${match.stage}`, `Команда 1 (капитан): ${teamDisplay(team1)}`, `Команда 2 (капитан): ${teamDisplay(team2)}`, `Начало: ${formatTime(match.startTime ?? match.scheduledTime, match.timezone)}`, `Окончание: ${formatTime(match.endTime, match.timezone)}`, `Сервер / ссылка: ${match.serverLink ?? "Не назначено"}`, `Статус: ${match.status === "completed" ? "Завершён" : "Запланирован"}`, `Результат: ${match.result ?? "Не определён"}`].join("\n");
 }
 function filteredMatches(data: TournamentData, ctx: Ctx): MatchTable[] {
   const active = activeTournament(data); const filter = view(ctx); const query = filter.matchTeamQuery?.trim().toLocaleLowerCase();
   return tournamentMatches(data, active?.id).filter((match) => {
     const names = `${data.teams[match.team1Id]?.name ?? ""} ${match.team2Id ? data.teams[match.team2Id]?.name ?? "" : ""}`.toLocaleLowerCase();
     return (!filter.matchStage || match.stage === filter.matchStage) && (!query || names.includes(query));
-  }).sort((a, b) => (a.scheduledTime ?? Number.MAX_SAFE_INTEGER) - (b.scheduledTime ?? Number.MAX_SAFE_INTEGER) || a.number - b.number);
+  }).sort((a, b) => (matchStartEpoch(a) ?? Number.MAX_SAFE_INTEGER) - (matchStartEpoch(b) ?? Number.MAX_SAFE_INTEGER) || a.number - b.number);
 }
 function matchKeyboard(data: TournamentData, ctx: Ctx, list: MatchTable[]) {
   const stages = [...new Set(tournamentMatches(data, activeTournament(data)?.id).map((match) => match.stage))];
