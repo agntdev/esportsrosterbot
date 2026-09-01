@@ -144,6 +144,20 @@ export class ChatDO {
       }
     }
 
+    // A single named ChatDO is also the durable tournament record store. The
+    // handler addresses it as "tournament:data" and keeps explicit teamIds,
+    // so no Redis/Durable Object keyspace scan is ever needed.
+    if (url.pathname === "/tournament") {
+      if (request.method === "GET") {
+        const data = await this.state.storage.get<unknown>("tournament-data");
+        return Response.json(data ?? { nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {} });
+      }
+      if (request.method === "PUT") {
+        await this.state.storage.put("tournament-data", await request.json());
+        return new Response(null, { status: 204 });
+      }
+    }
+
     // Schedule a reminder + (re)arm the alarm to the earliest due one.
     if (url.pathname === "/remind" && request.method === "POST") {
       const rem = (await request.json()) as Reminder;
