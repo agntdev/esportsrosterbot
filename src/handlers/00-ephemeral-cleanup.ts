@@ -14,6 +14,24 @@ type EphemeralSession = {
 
 const composer = new Composer<Ctx>();
 
+// Telegram may deliver a callback after its acknowledgement window.  A late
+// acknowledgement is harmless, whereas letting its 400 abort the handler made
+// valid buttons look unresponsive in production.
+composer.use(async (ctx, next) => {
+  if (ctx.callbackQuery) {
+    const answer = ctx.answerCallbackQuery.bind(ctx);
+    (ctx as Ctx & { answerCallbackQuery: typeof answer }).answerCallbackQuery = async (...args) => {
+      try {
+        return await answer(...args);
+      } catch (error) {
+        if (!String(error).includes("query is too old") && !String(error).includes("query ID is invalid")) throw error;
+        return true as never;
+      }
+    };
+  }
+  return next();
+});
+
 composer.on("message:text", async (ctx, next) => {
   const state = ctx.session as unknown as EphemeralSession;
   // Commands and ordinary chat messages are not form input. Only a message sent

@@ -14,7 +14,7 @@
  */
 
 import type { StorageAdapter } from "grammy";
-import { applyRosterSlotUpdate, type RosterSlotUpdate, type TournamentData } from "../../tournament-store.js";
+import { applyRosterSlotUpdate, now, type RosterSlotUpdate, type TournamentData } from "../../tournament-store.js";
 
 // Minimal shapes so this file type-checks without pulling @cloudflare/workers-types
 // into the Node build. The real bindings are provided by the Workers runtime.
@@ -50,6 +50,10 @@ interface Reminder {
   at: number; // epoch ms
   chatId: number | string;
   text: string;
+}
+interface MatchStartEvent {
+  at: number;
+  matchId: string;
 }
 
 /**
@@ -176,13 +180,28 @@ export class ChatDO {
       }
     }
 
+    // Tournament alarms transition scheduled fixtures while the bot is idle.
+    // The explicit event index avoids scanning Durable Object storage.
+    if (url.pathname === "/tournament/schedule" && request.method === "POST") {
+      const requested = (await request.json()) as MatchStartEvent[];
+      const existing = (await this.state.storage.get<MatchStartEvent[]>("match-start-events")) ?? [];
+      const byMatch = new Map(existing.map((event) => [event.matchId, event]));
+      for (const event of requested) {
+        if (event && typeof event.matchId === "string" && Number.isFinite(event.at)) byMatch.set(event.matchId, event);
+      }
+      const events = [...byMatch.values()];
+      await this.state.storage.put("match-start-events", events);
+      await this.rearm((await this.state.storage.get<Reminder[]>("reminders")) ?? [], events);
+      return new Response(null, { status: 204 });
+    }
+
     // Schedule a reminder + (re)arm the alarm to the earliest due one.
     if (url.pathname === "/remind" && request.method === "POST") {
       const rem = (await request.json()) as Reminder;
       const list = (await this.state.storage.get<Reminder[]>("reminders")) ?? [];
       list.push(rem);
       await this.state.storage.put("reminders", list);
-      await this.rearm(list);
+      await this.rearm(list, (await this.state.storage.get<MatchStartEvent[]>("match-start-events")) ?? []);
       return new Response(null, { status: 204 });
     }
 
@@ -192,20 +211,35 @@ export class ChatDO {
   // Fires at the earliest reminder's wall-clock time. Sends every due reminder,
   // drops them, and re-arms for whatever remains.
   async alarm(): Promise<void> {
-    const now = Date.now();
+    const instant = now();
     const list = (await this.state.storage.get<Reminder[]>("reminders")) ?? [];
-    const due = list.filter((r) => r.at <= now);
-    const rest = list.filter((r) => r.at > now);
+    const due = list.filter((r) => r.at <= instant);
+    const rest = list.filter((r) => r.at > instant);
     for (const r of due) {
       await tg(this.env.BOT_TOKEN, "sendMessage", { chat_id: r.chatId, text: r.text });
     }
     await this.state.storage.put("reminders", rest);
-    await this.rearm(rest);
+    const events = (await this.state.storage.get<MatchStartEvent[]>("match-start-events")) ?? [];
+    const dueEvents = events.filter((event) => event.at <= instant);
+    const remainingEvents = events.filter((event) => event.at > instant);
+    if (dueEvents.length) {
+      const data = await this.state.storage.get<TournamentData>("tournament-data");
+      if (data) {
+        for (const event of dueEvents) {
+          const match = data.matches?.[event.matchId];
+          if (match?.status === "scheduled") match.status = "in_progress";
+        }
+        await this.state.storage.put("tournament-data", data);
+      }
+    }
+    await this.state.storage.put("match-start-events", remainingEvents);
+    await this.rearm(rest, remainingEvents);
   }
 
-  private async rearm(list: Reminder[]): Promise<void> {
-    if (list.length === 0) return;
-    const next = Math.min(...list.map((r) => r.at));
+  private async rearm(list: Reminder[], matchEvents: MatchStartEvent[] = []): Promise<void> {
+    const times = [...list.map((r) => r.at), ...matchEvents.map((event) => event.at)];
+    if (times.length === 0) return;
+    const next = Math.min(...times);
     const current = await this.state.storage.getAlarm();
     if (current === null || next < current) {
       await this.state.storage.setAlarm(next);

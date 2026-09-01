@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, isOwner, registerMainMenuItem, requireOwner } from "../toolkit/index.js";
-import { activeTournament, allowDuplicateIds, captainIdentifier, conflicts, createTournament, eligibleTeams, logEvent, matchStartEpoch, normalizeNickname, now, parseMatchStart, readTournament, scheduleMatch, teamHeader, teamIdentity, teams, tournamentMatches, type MatchTable, type Team, writeTournament } from "../tournament-store.js";
+import { activeTournament, allowDuplicateIds, captainIdentifier, conflicts, createTournament, eligibleTeams, logEvent, matchStartEpoch, normalizeNickname, now, parseMatchStart, readTournament, scheduleMatch, scheduleTournamentStartEvents, startTournament, teamHeader, teamIdentity, teams, tournamentMatches, type MatchTable, type Team, writeTournament } from "../tournament-store.js";
 import { formatTime, rosterCard } from "./tournament-table.js";
 
 registerMainMenuItem({ label: "Панель администратора", data: "admin:desk", order: 90 });
@@ -10,7 +10,7 @@ const input = { force_reply: true, input_field_placeholder: "Введите зн
 const dateInput = { force_reply: true, input_field_placeholder: "YYYY-MM-DD" } as const;
 const timeInput = { force_reply: true, input_field_placeholder: "HH:MM, например 20:00" } as const;
 async function owner(ctx: Ctx): Promise<boolean> { if (isOwner(ctx)) { await ctx.answerCallbackQuery(); return true; } return requireOwner(ctx as never); }
-function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("В меню", "menu:main")]]); }
+function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("Начать турнир", "admin:tournament:start")], [inlineButton("В меню", "menu:main")]]); }
 function tournamentPreview(data: Awaited<ReturnType<typeof readTournament>>, list: Team[]): string {
   return `Подготовка турнира\nПодробный вид: включён\n\n${list.map((team) => rosterCard(data, team)).join("\n\n")}`;
 }
@@ -47,7 +47,30 @@ composer.callbackQuery("admin:tournament:confirm", async (ctx) => {
   for (const team of list) {
     try { await ctx.api.sendMessage(team.captainTelegramId, `Ваша команда ${teamIdentity(team)} включена в турнир. Состав зафиксирован.`, { reply_markup: view }); } catch { /* A blocked captain must not prevent other notifications. */ }
   }
-  await ctx.reply(confirmation, { reply_markup: inlineKeyboard([[inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) });
+  await ctx.reply(confirmation, { reply_markup: inlineKeyboard([[inlineButton("Начать турнир", "admin:tournament:start")], [inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) });
+});
+composer.callbackQuery("admin:tournament:start", async (ctx) => {
+  if (!(await owner(ctx))) return;
+  const data = await readTournament(ctx);
+  const tournament = activeTournament(data);
+  if (!tournament) {
+    await ctx.reply("Сначала составьте турнир из подтверждённых команд.", { reply_markup: deskKeyboard() });
+    return;
+  }
+  // "active" is the legacy pre-start state. Let its owner press Start once to
+  // repair old tournaments that were created without fixture times.
+  if (tournament.status === "in_progress") {
+    await ctx.reply("Турнир уже идёт. Откройте таблицу матчей, чтобы увидеть актуальные статусы.", { reply_markup: inlineKeyboard([[inlineButton("Открыть таблицу матчей", "matches:show")], [inlineButton("К панели", "admin:desk")]]) });
+    return;
+  }
+  const matches = startTournament(data, tournament);
+  if (!matches.length) {
+    await ctx.reply("Не удалось начать турнир: не найдены матчи. Составьте турнир заново.", { reply_markup: deskKeyboard() });
+    return;
+  }
+  await writeTournament(ctx, data);
+  await scheduleTournamentStartEvents(ctx, matches);
+  await ctx.reply(`Турнир начат. Матч №${matches[0].number} идёт сейчас; время следующих матчей назначено автоматически.`, { reply_markup: inlineKeyboard([[inlineButton("Открыть таблицу матчей", "matches:show")], [inlineButton("Управлять матчами", "admin:matches")]]) });
 });
 composer.callbackQuery("admin:price", async (ctx) => { if (!(await owner(ctx))) return; ctx.session.flow = "price"; await ctx.reply("Введите цену регистрации целым числом. Введите 0, чтобы оставить регистрацию бесплатной.", { reply_markup: input }); });
 composer.callbackQuery("admin:conflicts", async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const list = teams(data).filter((team) => conflicts(data, team).length > 0); await ctx.reply(list.length ? "Выберите конфликт состава для решения." : "Нет конфликтов состава, ожидающих проверки.", { reply_markup: list.length ? inlineKeyboard([...list.slice(0, 7).map((team) => [inlineButton(teamIdentity(team).slice(0, 24), `admin:conf:${team.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
@@ -123,7 +146,7 @@ composer.callbackQuery(/^conf:confirm:(team1|team2|both):(t\d+)$/, async (ctx) =
   }
   await ctx.reply(`Решение применено: ${resolutionLabel(choice)}. Капитаны уведомлены.`, { reply_markup: deskKeyboard() });
 });
-function matchLabel(data: Awaited<ReturnType<typeof readTournament>>, match: MatchTable): string { const one = data.teams[match.team1Id]; const two = match.team2Id ? data.teams[match.team2Id] : undefined; return `№${match.number}: ${one?.name ?? "—"} (${one ? captainIdentifier(one) : "—"}) — ${two?.name ?? "Не назначено"} (${two ? captainIdentifier(two) : "—"})\nНачало: ${formatTime(match.startTime ?? match.scheduledTime, match.timezone)}\nОкончание: ${formatTime(match.endTime, match.timezone)}`; }
+function matchLabel(data: Awaited<ReturnType<typeof readTournament>>, match: MatchTable): string { const one = data.teams[match.team1Id]; const two = match.team2Id ? data.teams[match.team2Id] : undefined; const state = match.status === "in_progress" ? "Идёт" : match.status === "completed" ? "Завершён" : "Запланирован"; return `№${match.number}: ${one?.name ?? "—"} (${one ? captainIdentifier(one) : "—"}) — ${two?.name ?? "Не назначено"} (${two ? captainIdentifier(two) : "—"})\nНачало: ${formatTime(match.startTime ?? match.scheduledTime, match.timezone)}\nОкончание: ${formatTime(match.endTime, match.timezone)}\nСтатус: ${state}`; }
 function matchActions(match: MatchTable) { return inlineKeyboard([[inlineButton("Назначить время", `admin:match:time:${match.id}`)], [inlineButton("Сервер / ссылка", `admin:match:link:${match.id}`)], [inlineButton("Победитель: Команда 1", `admin:match:winner:1:${match.id}`)], [inlineButton("Победитель: Команда 2", `admin:match:winner:2:${match.id}`)], [inlineButton("К матчам", "admin:matches")]]); }
 composer.callbackQuery("admin:matches", async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const list = tournamentMatches(data, activeTournament(data)?.id).sort((a, b) => (matchStartEpoch(a) ?? Number.MAX_SAFE_INTEGER) - (matchStartEpoch(b) ?? Number.MAX_SAFE_INTEGER) || a.number - b.number); await ctx.reply(list.length ? `Матчи\n\n${list.map((match) => matchLabel(data, match)).join("\n\n")}` : "Матчей пока нет — сначала составьте турнир.", { reply_markup: list.length ? inlineKeyboard([...list.map((match) => [inlineButton(`Матч №${match.number}`, `admin:match:open:${match.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
 composer.callbackQuery(/^admin:match:open:(m\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const match = data.matches[ctx.match?.[1] ?? ""]; if (!match) { await ctx.reply("Этот матч больше недоступен."); return; } ctx.session.managingMatchId = match.id; await ctx.reply(matchLabel(data, match), { reply_markup: matchActions(match) }); });
