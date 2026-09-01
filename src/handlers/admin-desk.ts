@@ -2,19 +2,15 @@ import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, isOwner, registerMainMenuItem, requireOwner } from "../toolkit/index.js";
 import { activeTournament, allowDuplicateIds, conflicts, createTournament, eligibleTeams, logEvent, normalizeNickname, now, readTournament, teamHeader, teamIdentity, teams, type Team, writeTournament } from "../tournament-store.js";
+import { rosterCard } from "./tournament-table.js";
 
 registerMainMenuItem({ label: "Панель администратора", data: "admin:desk", order: 90 });
 const composer = new Composer<Ctx>();
 const input = { force_reply: true, input_field_placeholder: "Введите значение" } as const;
 async function owner(ctx: Ctx): Promise<boolean> { if (isOwner(ctx)) { await ctx.answerCallbackQuery(); return true; } return requireOwner(ctx as never); }
 function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("В меню", "menu:main")]]); }
-function rosterSummary(team: Team): string {
-  const starters = team.players.filter((player) => !player.isSubstitute).map((player) => `${player.inGameId} — ${player.nickname}`).join(", ");
-  const substitutes = team.players.filter((player) => player.isSubstitute).map((player) => `${player.inGameId} — ${player.nickname}`).join(", ");
-  return `${starters}${substitutes ? `; замены: ${substitutes}` : "; замен нет"}`;
-}
-function tournamentPreview(list: Team[]): string {
-  return `Предварительный состав турнира\n\n${list.map((team) => `${teamIdentity(team)}\nКапитан: ${team.captainContact || team.players[0]?.nickname || "не указан"}\nСостав: ${rosterSummary(team)}\nПримечания: нет`).join("\n\n")}`;
+function tournamentPreview(data: Awaited<ReturnType<typeof readTournament>>, list: Team[]): string {
+  return `Tournament Preparation\nClean view: ON\n\n${list.map((team) => rosterCard(data, team)).join("\n\n")}`;
 }
 
 composer.callbackQuery("admin:desk", async (ctx) => { if (!(await owner(ctx))) return; await ctx.reply("Управляйте регистрациями, конфликтами и матчами.", { reply_markup: deskKeyboard() }); });
@@ -25,7 +21,7 @@ composer.callbackQuery("admin:tournament:compose", async (ctx) => {
   if (existing) { await ctx.reply("Турнир уже составлен. Откройте его в публичной таблице.", { reply_markup: inlineKeyboard([[inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) }); return; }
   const list = eligibleTeams(data);
   if (!list.length) { await ctx.reply("Нет заявок, готовых к включению в турнир. Нужны подтверждённые команды без конфликтов ID.", { reply_markup: deskKeyboard() }); return; }
-  await ctx.reply(tournamentPreview(list), { reply_markup: inlineKeyboard([[inlineButton("Подтвердить составление", "admin:tournament:confirm")], [inlineButton("Отменить", "admin:tournament:cancel")]]) });
+  await ctx.reply(tournamentPreview(data, list), { reply_markup: inlineKeyboard([[inlineButton("Подтвердить составление", "admin:tournament:confirm")], [inlineButton("Отменить", "admin:tournament:cancel")]]) });
 });
 composer.callbackQuery("admin:tournament:cancel", async (ctx) => {
   if (!(await owner(ctx))) return;
