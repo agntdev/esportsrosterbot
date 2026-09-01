@@ -1,5 +1,6 @@
 import { Composer } from "grammy";
 import { createBot, type BotContext, type CreateBotOptions } from "./toolkit/index.js";
+import { resolveSessionStorage } from "./toolkit/session/redis.js";
 import type { StorageAdapter } from "grammy";
 import ephemeralCleanup from "./handlers/00-ephemeral-cleanup.js";
 import adminDesk from "./handlers/admin-desk.js";
@@ -19,11 +20,10 @@ export interface Session {
   editingSlot?: number;
   managingTeamId?: string;
   managingMatchId?: string;
-  /** Harness/Node fallback only. Production records live in the tournament DO. */
-  tournamentData?: unknown;
 }
 
-export type Ctx = BotContext<Session>;
+/** Domain records use a global storage key; sessions remain per-chat forms. */
+export type Ctx = BotContext<Session> & { tournamentStorage?: StorageAdapter<unknown> };
 
 /**
  * BuildBotOptions lets a runtime-specific ENTRY POINT (never a feature handler)
@@ -57,11 +57,18 @@ export interface BuildBotOptions {
  * build-time manifest because Workers has no filesystem.
  */
 export function buildBot(token: string, opts: BuildBotOptions = {}) {
+  // Resolve once so the global tournament key and grammY sessions share the
+  // same persistent adapter in Node, while Workers use their supplied adapter.
+  const storage = opts.storage ?? resolveSessionStorage<Session>(undefined);
   const bot = createBot<Session>(token, {
     initial: () => ({}),
-    storage: opts.storage,
+    storage,
     telemetryEnv: opts.telemetryEnv,
     telemetryReporterOptions: opts.telemetryReporterOptions,
+  });
+  bot.use((ctx, next) => {
+    (ctx as Ctx).tournamentStorage = storage as StorageAdapter<unknown>;
+    return next();
   });
 
   // Registration is synchronous so a newly created bot can handle an update

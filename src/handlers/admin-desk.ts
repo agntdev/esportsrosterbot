@@ -10,7 +10,7 @@ const input = { force_reply: true, input_field_placeholder: "Введите зн
 const dateInput = { force_reply: true, input_field_placeholder: "YYYY-MM-DD" } as const;
 const timeInput = { force_reply: true, input_field_placeholder: "HH:MM, например 20:00" } as const;
 async function owner(ctx: Ctx): Promise<boolean> { if (isOwner(ctx)) { await ctx.answerCallbackQuery(); return true; } return requireOwner(ctx as never); }
-function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Открыть сетку турнира", "tournament:show")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("Начать турнир", "admin:tournament:start")], [inlineButton("В меню", "menu:main")]]); }
+function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Прикрепить ссылку", "admin:attach_link")], [inlineButton("Открыть сетку турнира", "tournament:show")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("Начать турнир", "admin:tournament:start")], [inlineButton("В меню", "menu:main")]]); }
 function tournamentPreview(data: Awaited<ReturnType<typeof readTournament>>, list: Team[]): string {
   return `Подготовка турнира\nПодробный вид: включён\n\n${list.map((team) => rosterCard(data, team)).join("\n\n")}`;
 }
@@ -22,7 +22,7 @@ composer.callbackQuery("admin:tournament:compose", async (ctx) => {
   const existing = activeTournament(data);
   if (existing) { await ctx.reply("Турнир уже составлен. Откройте его в публичной таблице.", { reply_markup: inlineKeyboard([[inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) }); return; }
   const list = eligibleTeams(data);
-  if (!list.length) { await ctx.reply("Нет заявок, готовых к включению в турнир. Нужны подтверждённые команды без конфликтов ID.", { reply_markup: deskKeyboard() }); return; }
+  if (list.length < 2) { await ctx.reply("Для старта турнира нужны минимум две подтверждённые команды без конфликтов ID.", { reply_markup: deskKeyboard() }); return; }
   await ctx.reply(tournamentPreview(data, list), { reply_markup: inlineKeyboard([[inlineButton("Подтвердить составление", "admin:tournament:confirm")], [inlineButton("Отменить", "admin:tournament:cancel")]]) });
 });
 composer.callbackQuery("admin:tournament:cancel", async (ctx) => {
@@ -35,7 +35,7 @@ composer.callbackQuery("admin:tournament:confirm", async (ctx) => {
   const existing = activeTournament(data);
   if (existing) { await ctx.reply("Турнир уже составлен. Повторное подтверждение ничего не изменило.", { reply_markup: inlineKeyboard([[inlineButton("Открыть турнир", "tournament:show")], [inlineButton("К панели", "admin:desk")]]) }); return; }
   const list = eligibleTeams(data);
-  if (!list.length) { await ctx.reply("Нет заявок, готовых к включению в турнир. Проверьте статусы команд.", { reply_markup: deskKeyboard() }); return; }
+  if (list.length < 2) { await ctx.reply("Для старта турнира нужны минимум две подтверждённые команды без конфликтов ID.", { reply_markup: deskKeyboard() }); return; }
   const tournament = createTournament(data, list, String(ctx.from?.id ?? ctx.chat?.id ?? ""));
   const byeAdvances = resolveBracketByes(data, tournament);
   await writeTournament(ctx, data);
@@ -153,8 +153,9 @@ composer.callbackQuery(/^conf:confirm:(team1|team2|both):(t\d+)$/, async (ctx) =
   await ctx.reply(`Решение применено: ${resolutionLabel(choice)}. Капитаны уведомлены.`, { reply_markup: deskKeyboard() });
 });
 function matchLabel(data: Awaited<ReturnType<typeof readTournament>>, match: MatchTable): string { const one = data.teams[match.team1Id]; const two = match.team2Id ? data.teams[match.team2Id] : undefined; const state = match.status === "in_progress" ? "Идёт" : match.status === "completed" ? "Завершён" : "Запланирован"; return `№${match.number}: ${one?.name ?? "—"} (${one ? captainIdentifier(one) : "—"}) — ${two?.name ?? "Не назначено"} (${two ? captainIdentifier(two) : "—"})\nНачало: ${formatTime(match.startTime ?? match.scheduledTime, match.timezone)}\nОкончание: ${formatTime(match.endTime, match.timezone)}\nСтатус: ${state}`; }
-function matchActions(match: MatchTable) { return inlineKeyboard([[inlineButton("Назначить время", `admin:match:time:${match.id}`)], [inlineButton("Сервер / ссылка", `admin:match:link:${match.id}`)], [inlineButton("Выбрать команду 1", `admin:match:winner:1:${match.id}`)], [inlineButton("Выбрать команду 2", `admin:match:winner:2:${match.id}`)], [inlineButton("К матчам", "admin:matches")]]); }
+function matchActions(match: MatchTable) { return inlineKeyboard([[inlineButton("Назначить время", `admin:match:time:${match.id}`)], [inlineButton("Сервер / ссылка", `admin:match:link:${match.id}`)], ...(match.team1Id ? [[inlineButton("Выбрать команду 1", `admin:match:winner:1:${match.id}`)]] : []), ...(match.team2Id ? [[inlineButton("Выбрать команду 2", `admin:match:winner:2:${match.id}`)]] : []), [inlineButton("К матчам", "admin:matches")]]); }
 composer.callbackQuery("admin:matches", async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const list = tournamentMatches(data, activeTournament(data)?.id).sort((a, b) => (matchStartEpoch(a) ?? Number.MAX_SAFE_INTEGER) - (matchStartEpoch(b) ?? Number.MAX_SAFE_INTEGER) || a.number - b.number); await ctx.reply(list.length ? `Матчи\n\n${list.map((match) => matchLabel(data, match)).join("\n\n")}` : "Матчей пока нет — сначала составьте турнир.", { reply_markup: list.length ? inlineKeyboard([...list.map((match) => [inlineButton(`Матч №${match.number}`, `admin:match:open:${match.id}`)]), [inlineButton("К панели", "admin:desk")]]) : deskKeyboard() }); });
+composer.callbackQuery("admin:attach_link", async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const list = tournamentMatches(data, activeTournament(data)?.id); if (!list.length) { await ctx.reply("Матчей пока нет — сначала составьте турнир.", { reply_markup: deskKeyboard() }); return; } await ctx.reply("Выберите матч, к которому нужно прикрепить ссылку.", { reply_markup: inlineKeyboard([...list.map((match) => [inlineButton(`Матч №${match.number}`, `admin:match:link:${match.id}`)]), [inlineButton("К панели", "admin:desk")]]) }); });
 composer.callbackQuery(/^admin:match:open:(m\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const data = await readTournament(ctx); const match = data.matches[ctx.match?.[1] ?? ""]; if (!match) { await ctx.reply("Этот матч больше недоступен."); return; } ctx.session.managingMatchId = match.id; await ctx.reply(matchLabel(data, match), { reply_markup: matchActions(match) }); });
 composer.callbackQuery(/^admin:match:(time|link):(m\d+)$/, async (ctx) => { if (!(await owner(ctx))) return; const action = ctx.match?.[1]; const matchId = ctx.match?.[2] ?? ""; const data = await readTournament(ctx); if (!data.matches[matchId]) { await ctx.reply("Этот матч больше недоступен."); return; } ctx.session.managingMatchId = matchId; if (action === "time") { (ctx.session as { flow?: string; pendingMatchDate?: string }).flow = "match_date"; (ctx.session as { pendingMatchDate?: string }).pendingMatchDate = undefined; await ctx.reply("Введите дату матча в формате YYYY-MM-DD. Время турнира — Москва (UTC+3).", { reply_markup: dateInput }); return; } ctx.session.flow = "match_link"; await ctx.reply("Отправьте полную ссылку на сервер или матч, начиная с https://.", { reply_markup: input }); });
 composer.callbackQuery(/^admin:match:winner:([12]):(m\d+)$/, async (ctx) => {
@@ -162,12 +163,13 @@ composer.callbackQuery(/^admin:match:winner:([12]):(m\d+)$/, async (ctx) => {
   const data = await readTournament(ctx); const match = data.matches[ctx.match?.[2] ?? ""];
   const winnerId = ctx.match?.[1] === "1" ? match?.team1Id : match?.team2Id;
   if (!match || !winnerId || !data.teams[winnerId] || match.status === "completed") { await ctx.reply(match?.status === "completed" ? "Этот результат уже сохранён." : "Для этого матча нельзя выбрать победителя."); return; }
+  if (match.status !== "in_progress") { await ctx.reply("Этот матч ещё не начался. Сначала запустите турнир или дождитесь назначенного времени."); return; }
   await ctx.reply(`Подтвердите победителя: ${data.teams[winnerId].name}.`, { reply_markup: inlineKeyboard([[inlineButton("Подтвердить победителя", `admin:match:confirm:${winnerId}:${match.id}`)], [inlineButton("Назад к матчу", `admin:match:open:${match.id}`)]] ) });
 });
 composer.callbackQuery(/^admin:match:confirm:(t\d+):(m\d+)$/, async (ctx) => {
   if (!(await owner(ctx))) return;
   const data = await readTournament(ctx); const winnerId = ctx.match?.[1] ?? ""; const match = data.matches[ctx.match?.[2] ?? ""];
-  if (!match || match.status === "completed" || (match.team1Id !== winnerId && match.team2Id !== winnerId)) { await ctx.reply("Этот результат больше нельзя подтвердить."); return; }
+  if (!match || match.status !== "in_progress" || (match.team1Id !== winnerId && match.team2Id !== winnerId)) { await ctx.reply(match?.status === "completed" ? "Этот результат уже сохранён." : "Этот результат больше нельзя подтвердить."); return; }
   const outcome = advanceMatchWinner(data, match, winnerId);
   await writeTournament(ctx, data);
   await scheduleTournamentStartEvents(ctx, outcome.advanced.flatMap((advance) => advance.nextMatch ? [advance.nextMatch] : []));
