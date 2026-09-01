@@ -3,7 +3,7 @@
     "name": "Регистрация команды собирает заявку и публикует её после подтверждения",
     "steps": [
       { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите название команды." } }] },
-      { "send": { "text": "Northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }] },
+      { "send": { "text": "Northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }, { "method": "deleteMessage", "payload": { "chat_id": 1, "message_id": 2 } }] },
       { "send": { "text": "n1" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — игровой никнейм." } }] },
       { "send": { "text": "Nova" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Укажите контакт капитана: @username или номер телефона." } }] },
       { "send": { "text": "@northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 2 — Game ID." } }] },
