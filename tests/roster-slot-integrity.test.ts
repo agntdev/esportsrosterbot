@@ -37,7 +37,7 @@ describe("roster slot integrity", () => {
 
   it("rejects a duplicate ID without changing the intended slot", () => {
     const tournament = data();
-    expect(() => applyRosterSlotUpdate(tournament, { teamId: "t1", slot: 0, player: { inGameId: "p2", nickname: "Duplicate", isSubstitute: false } })).toThrow("already on the roster");
+    expect(() => applyRosterSlotUpdate(tournament, { teamId: "t1", slot: 0, player: { inGameId: "p2", nickname: "Duplicate", isSubstitute: false } })).toThrow("Игровой ID уже есть в составе.");
     expect(tournament.teams.t1.players[0].inGameId).toBe("p1");
     expect(tournament.teams.t1.players[1].inGameId).toBe("p2");
   });

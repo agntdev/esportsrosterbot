@@ -26,7 +26,7 @@ describe("tournament roster cards", () => {
       ],
     };
     const other: Team = { ...team, id: "t2", uniqueId: 2, name: "Rivals", captainTelegramId: "202", players: [{ nickname: "Else", inGameId: "n2", isSubstitute: false }] };
-    expect(rosterCard(dataWith(team, other), team)).toBe("Team: Northwind\nCaptain: Nova (ID: n1)\nStarters:\n1. Nova (n1)\n2. Orbit (n2) ⚠️ ID conflict\n3. Apex (n3)\n4. Empty slot\n5. Empty slot\nSubs:\n- Sub1: Reserve (s1)\n- Sub2: Empty slot");
+    expect(rosterCard(dataWith(team, other), team)).toBe("Команда: Northwind\nКапитан: Nova (ID: n1)\nОсновной состав:\n1. Nova (n1)\n2. Orbit (n2) ⚠️ конфликт ID\n3. Apex (n3)\n4. Пустой слот\n5. Пустой слот\nЗамены:\n- Замена 1: Reserve (s1)\n- Замена 2: Пустой слот");
   });
 
   it("marks overflow roster entries as unassigned only in the expanded card", () => {
@@ -35,6 +35,6 @@ describe("tournament roster cards", () => {
       players: Array.from({ length: 8 }, (_, index) => ({ nickname: `P${index + 1}`, inGameId: `p${index + 1}`, isSubstitute: index >= 5 })),
     };
     expect(rosterCard(dataWith(team), team)).not.toContain("P8");
-    expect(rosterCard(dataWith(team), team, true)).toContain("- Extra: P8 (p8)");
+    expect(rosterCard(dataWith(team), team, true)).toContain("- Дополнительно: P8 (p8)");
   });
 });

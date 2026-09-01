@@ -3,12 +3,12 @@
     "name": "Unregistered similar nicknames continue through roster registration",
     "steps": [
       { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Введите название команды." } }] },
-      { "send": { "text": "Rookies" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — Game ID." } }] },
+      { "send": { "text": "Rookies" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — игровой ID." } }] },
       { "send": { "text": "r1" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Капитан — игровой никнейм." } }] },
       { "send": { "text": "dim" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Укажите контакт капитана: @username или номер телефона." } }] },
-      { "send": { "text": "@rookies" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 2 — Game ID." } }] },
+      { "send": { "text": "@rookies" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 2 — игровой ID." } }] },
       { "send": { "text": "r2" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 2 — игровой никнейм." } }] },
-      { "send": { "text": "dima" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 3 — Game ID." } }] }
+      { "send": { "text": "dima" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Игрок 3 — игровой ID." } }] }
     ]
   }
 ]

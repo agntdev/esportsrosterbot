@@ -5,7 +5,7 @@ import { conflicts, nicknameConflict, readTournament, teamHeader, teamIdentity, 
 
 registerMainMenuItem({ label: "Редактировать команду", data: "edit:team", order: 20 });
 const composer = new Composer<Ctx>();
-const rosterInput = { force_reply: true, input_field_placeholder: "Game ID | никнейм" } as const;
+const rosterInput = { force_reply: true, input_field_placeholder: "Игровой ID | никнейм" } as const;
 const nameInput = { force_reply: true, input_field_placeholder: "Введите название команды" } as const;
 type EditSession = {
   flow?: string;
@@ -112,7 +112,7 @@ composer.callbackQuery(/^edit:slot:(\d+)$/, async (ctx) => {
   if (s.flow !== undefined || !team || !canEdit(ctx, team.captainTelegramId) || !Number.isInteger(slot) || slot < 0 || slot >= team.players.length) { await ctx.reply("Этот слот недоступен. Откройте редактирование команды снова."); return; }
   s.flow = "edit_player";
   s.editingSlot = slot;
-  await ctx.reply(`Введите Game ID и никнейм для ${slot < 5 ? `игрока ${slot + 1}` : `замены ${slot - 4}`} через |.`, { reply_markup: rosterInput });
+  await ctx.reply(`Введите игровой ID и никнейм для ${slot < 5 ? `игрока ${slot + 1}` : `замены ${slot - 4}`} через |.`, { reply_markup: rosterInput });
 });
 
 composer.callbackQuery(/^edit:clear:(\d+)$/, async (ctx) => {
@@ -158,12 +158,12 @@ composer.on("message:text", async (ctx, next) => {
   if (s.flow !== "edit_player") return next();
   const [rawId, ...nicknameParts] = ctx.message.text.split("|");
   const inGameId = rawId?.trim(); const nickname = nicknameParts.join("|").trim();
-  if (!inGameId || !nickname || inGameId.length > 128 || nickname.length > 128) { await ctx.reply("Введите Game ID и никнейм через |.", { reply_markup: rosterInput }); return; }
+  if (!inGameId || !nickname || inGameId.length > 128 || nickname.length > 128) { await ctx.reply("Введите игровой ID и никнейм через |.", { reply_markup: rosterInput }); return; }
   const data = await readTournament(ctx);
   const team = s.editingTeamId ? data.teams[s.editingTeamId] : undefined;
   const slot = s.editingSlot;
   if (!team || slot === undefined || !canEdit(ctx, team.captainTelegramId)) { s.flow = undefined; await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
-  if (team.players.some((player, index) => index !== slot && player.inGameId.toLowerCase() === inGameId.toLowerCase())) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: rosterInput }); return; }
+  if (team.players.some((player, index) => index !== slot && player.inGameId.toLowerCase() === inGameId.toLowerCase())) { await ctx.reply("Этот игровой ID уже есть в составе. Укажите другой.", { reply_markup: rosterInput }); return; }
   if (nicknameConflict(data, nickname, "player", team.id)) {
     s.blockedName = { value: nickname, subject: "player" };
     await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
@@ -173,7 +173,7 @@ composer.on("message:text", async (ctx, next) => {
   try {
     updated = await updateRosterSlot(ctx, { teamId: team.id, slot, player: { inGameId, nickname, isSubstitute: slot >= 5 } });
   } catch {
-    await ctx.reply("Не удалось обновить слот. Проверьте, что этот Game ID не занят в составе, и попробуйте ещё раз.", { reply_markup: rosterInput });
+    await ctx.reply("Не удалось обновить слот. Проверьте, что этот игровой ID не занят в составе, и попробуйте ещё раз.", { reply_markup: rosterInput });
     return;
   }
   const updatedTeam = updated.teams[team.id];
