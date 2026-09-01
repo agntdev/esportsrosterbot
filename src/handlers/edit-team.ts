@@ -164,7 +164,7 @@ composer.on("message:text", async (ctx, next) => {
   const slot = s.editingSlot;
   if (!team || slot === undefined || !canEdit(ctx, team.captainTelegramId)) { s.flow = undefined; await ctx.reply("Редактирование больше недоступно. Откройте его снова."); return; }
   if (team.players.some((player, index) => index !== slot && player.inGameId.toLowerCase() === inGameId.toLowerCase())) { await ctx.reply("Этот Game ID уже есть в составе. Укажите другой.", { reply_markup: rosterInput }); return; }
-  if (nicknameConflict(data, nickname, "player", team.id, team.players.filter((_, index) => index !== slot).map((player) => player.nickname))) {
+  if (nicknameConflict(data, nickname, "player", team.id)) {
     s.blockedName = { value: nickname, subject: "player" };
     await ctx.reply("Похожий никнейм уже зарегистрирован в этом турнире — выберите другой ник или свяжитесь с администратором.", { reply_markup: inlineKeyboard([[inlineButton("Запросить проверку", "name:review")]]) });
     return;

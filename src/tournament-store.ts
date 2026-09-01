@@ -196,17 +196,21 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
 }
 
 export function conflicts(data: TournamentData, team: Team): Team[] {
-  const ids = new Set(team.players.map((player) => player.inGameId.trim().toLocaleLowerCase()).filter(Boolean));
+  const ids = new Set((team.players ?? []).map((player) => stringField(player?.inGameId).toLocaleLowerCase()).filter(Boolean));
   if (ids.size === 0) return [];
-  return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && other.players.some((p) => {
-    const id = p.inGameId.trim().toLocaleLowerCase();
+  return teams(data).filter((other) => other.id !== team.id && other.status !== "rejected" && (other.players ?? []).some((p) => {
+    const id = stringField(p?.inGameId).toLocaleLowerCase();
     return Boolean(id) && ids.has(id);
   }));
 }
 
 /** Removes cosmetic differences before tournament nickname comparisons. */
-export function normalizeNickname(value: string): string {
-  return value.trim().toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\p{L}\p{N}_-]/gu, "");
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function normalizeNickname(value: unknown): string {
+  return stringField(value).toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\p{L}\p{N}_-]/gu, "");
 }
 
 export function levenshtein(a: string, b: string): number {
@@ -227,13 +231,27 @@ export function nicknameSimilar(a: string, b: string): boolean {
   return longest <= 4 ? distance <= 1 : 1 - distance / longest >= 0.8;
 }
 
+/**
+ * A roster is the registration record for a player: a previously unseen
+ * nickname is valid input, not an error.  Only an exact normalized duplicate
+ * already stored in another submitted team needs organizer review.  This
+ * deliberately avoids fuzzy matches such as "dim" and "dima".
+ */
 export function nicknameConflict(data: TournamentData, candidate: string, subject: NameSubject, excludeTeamId?: string, localNames: string[] = []): boolean {
   const normalized = normalizeNickname(candidate);
-  if (!normalized || data.nameOverrides.some((item) => item.subject === subject && item.normalized === normalized)) return false;
+  const overrides = Array.isArray(data.nameOverrides) ? data.nameOverrides : [];
+  if (!normalized || overrides.some((item) => item?.subject === subject && normalizeNickname(item?.normalized) === normalized)) return false;
   const existing = subject === "team"
-    ? teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").map((team) => team.name)
-    : teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").flatMap((team) => team.players.map((player) => player.nickname));
-  return [...existing, ...localNames].some((name) => nicknameSimilar(candidate, name));
+    ? teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").map((team) => stringField(team.name))
+    : teams(data).filter((team) => team.id !== excludeTeamId && team.status !== "rejected").flatMap((team) => (team.players ?? []).map((player) => stringField(player?.nickname)));
+  const names = [...existing, ...localNames].map(normalizeNickname).filter(Boolean);
+  if (!names.includes(normalized)) {
+    // Do not include the nickname itself: this records lookup misses without
+    // retaining player data in logs.
+    console.info("[tournament] nickname lookup found no registered record");
+    return false;
+  }
+  return true;
 }
 
 export function createNameReview(data: TournamentData, requestedBy: string, candidate: string, subject: NameSubject): NameReview {
