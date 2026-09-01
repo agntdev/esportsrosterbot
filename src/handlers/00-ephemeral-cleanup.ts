@@ -28,6 +28,19 @@ composer.use(async (ctx, next) => {
         return true as never;
       }
     };
+
+    // Inline keyboards are routinely tapped twice on slow connections. Telegram
+    // correctly rejects the second identical edit with a 400, but it must not
+    // abort the rest of the middleware chain or make the bot appear offline.
+    const edit = ctx.editMessageText.bind(ctx);
+    (ctx as Ctx & { editMessageText: typeof edit }).editMessageText = async (...args) => {
+      try {
+        return await edit(...args);
+      } catch (error) {
+        if (!String(error).includes("message is not modified")) throw error;
+        return true as never;
+      }
+    };
   }
   return next();
 });

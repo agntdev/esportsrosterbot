@@ -18,7 +18,12 @@ composer.command("help", async (ctx) => {
 
 composer.callbackQuery("menu:help", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(HELP, { reply_markup: backToMenu });
+  try {
+    await ctx.editMessageText(HELP, { reply_markup: backToMenu });
+  } catch (error) {
+    // A repeat tap produces Telegram's harmless "message is not modified" 400.
+    if (!String(error).includes("message is not modified")) throw error;
+  }
 });
 
 export default composer;

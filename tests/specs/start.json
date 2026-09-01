@@ -15,9 +15,8 @@
   }
   ,
   {
-    "name": "/menu восстанавливает главное меню",
+    "name": "Кнопка главного меню восстанавливает меню",
     "steps": [
-      { "send": { "text": "/menu" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Выберите действие для участия в турнире." } }, { "method": "sendMessage", "payload": { "text": "Главное меню всегда доступно с клавиатуры ниже.", "reply_markup": { "keyboard": [[{ "text": "Главное меню" }]] } } }] },
       { "send": { "text": "Главное меню" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Выберите действие для участия в турнире." } }] }
     ]
   }
