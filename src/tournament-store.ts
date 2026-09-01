@@ -22,8 +22,8 @@ export type Team = {
 };
 export type NameSubject = "team" | "player";
 export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
-export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "active" };
-export type MatchStatus = "scheduled" | "completed";
+export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "ready" | "in_progress" | "completed" | "active" };
+export type MatchStatus = "scheduled" | "in_progress" | "completed";
 /** A pairing is stored once, rather than duplicated on each team. */
 export type MatchTable = {
   id: string;
@@ -164,6 +164,23 @@ export async function writeTournament(ctx: Ctx, data: TournamentData): Promise<v
   ctx.session.tournamentData = normalized;
 }
 
+/** Arms Worker alarms for scheduled fixtures. Reading the table still reconciles
+ * state, so an unavailable alarm never leaves a tournament stuck. */
+export async function scheduleTournamentStartEvents(ctx: Ctx, matches: MatchTable[]): Promise<void> {
+  const ns = envFor(ctx)?.CHAT_DO;
+  if (!ns) return;
+  try {
+    await ns.get(ns.idFromName("tournament:data")).fetch("https://do/tournament/schedule", {
+      method: "POST",
+      body: JSON.stringify(matches
+        .filter((match) => match.status === "scheduled" && matchStartEpoch(match) !== undefined)
+        .map((match) => ({ matchId: match.id, at: matchStartEpoch(match) }))),
+    });
+  } catch {
+    // Table reads provide the durable fallback if the alarm service is briefly unavailable.
+  }
+}
+
 /**
  * Changes exactly one roster position. The Workers path is a single Durable
  * Object request, so two quick taps cannot turn a slot-zero replacement into
@@ -213,7 +230,7 @@ export function teams(data: TournamentData): Team[] {
 
 /** The currently published tournament, if the organizer has assembled one. */
 export function activeTournament(data: TournamentData): Tournament | undefined {
-  return [...data.tournamentIds].reverse().map((id) => data.tournaments[id]).find((tournament) => tournament?.status === "active");
+  return [...data.tournamentIds].reverse().map((id) => data.tournaments[id]).find((tournament) => tournament && (tournament.status === "ready" || tournament.status === "in_progress" || tournament.status === "active"));
 }
 
 /** Entry criteria are deliberately centralized so preview and confirmation agree. */
@@ -229,7 +246,7 @@ export function eligibleTeams(data: TournamentData): Team[] {
 
 export function createTournament(data: TournamentData, selected: Team[], adminId: string): Tournament {
   const id = `tr${data.nextTournamentNumber++}`;
-  const tournament: Tournament = { id, teamIds: selected.map((team) => team.id), createdAt: now(), createdBy: adminId, status: "active" };
+  const tournament: Tournament = { id, teamIds: selected.map((team) => team.id), createdAt: now(), createdBy: adminId, status: "ready" };
   data.tournamentIds.push(id);
   data.tournaments[id] = tournament;
   for (const team of selected) {
@@ -258,6 +275,33 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
   data.auditEvents.push({ at: tournament.createdAt, type: "tournament_created", tournamentId: id, adminId });
   if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
   return tournament;
+}
+
+/** Starts a prepared tournament and gives every fixture a real, visible start time. */
+export function startTournament(data: TournamentData, tournament: Tournament): MatchTable[] {
+  if (tournament.status === "completed") return [];
+  const base = now();
+  const matches = tournamentMatches(data, tournament.id).sort((a, b) => a.number - b.number);
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    if (matchStartEpoch(match) === undefined) scheduleMatch(match, new Date(base + index * MATCH_DURATION_MS).toISOString());
+    if (match.status !== "completed") match.status = (matchStartEpoch(match) ?? Number.MAX_SAFE_INTEGER) <= base ? "in_progress" : "scheduled";
+  }
+  tournament.status = "in_progress";
+  return matches;
+}
+
+/** Reconciles a match state when it is read, including after a Worker restart. */
+export function refreshMatchStatuses(data: TournamentData): boolean {
+  const instant = now();
+  let changed = false;
+  for (const match of tournamentMatches(data)) {
+    if (match.status === "scheduled" && (matchStartEpoch(match) ?? Number.MAX_SAFE_INTEGER) <= instant) {
+      match.status = "in_progress";
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export function tournamentMatches(data: TournamentData, tournamentId?: string): MatchTable[] {

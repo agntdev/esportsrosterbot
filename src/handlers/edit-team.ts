@@ -183,7 +183,7 @@ composer.on("message:text", async (ctx, next) => {
     const admin = adminChatId(ctx as Ctx & { env?: Record<string, unknown> });
     const ids = updatedTeam.players.filter((player) => overlap.some((other) => other.players.some((otherPlayer) => otherPlayer.inGameId.toLowerCase() === player.inGameId.toLowerCase()))).map((player) => player.inGameId).join(", ");
     if (admin) {
-      try { await ctx.api.sendMessage(admin, `${teamHeader(updatedTeam)}\nКонфликт ID с: ${overlap.map((other) => teamIdentity(other)).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить эту", `conf:new:${updatedTeam.id}`), inlineButton("Оставить прежнюю", `conf:old:${updatedTeam.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
+      try { await ctx.api.sendMessage(admin, `${teamHeader(updatedTeam)}\nКонфликт ID с: ${overlap.map((other) => teamIdentity(other)).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Открыть конфликт", `admin:conf:${updatedTeam.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
     }
   }
   s.flow = undefined; s.editingSlot = undefined;
