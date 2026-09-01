@@ -83,5 +83,13 @@ export function rosterCard(data: TournamentData, team: Team, full = false): stri
 async function showTournament(ctx: Ctx, edit: boolean): Promise<void> { const data = await readTournament(ctx); if (refreshMatchStatuses(data)) await writeTournament(ctx, data); const tournament = activeTournament(data); if (!tournament) { const text = "Турнир ещё не составлен — таблица появится после решения организатора."; if (edit) await editTableMessage(ctx, text); else await ctx.reply(text); return; } const entered = tournament.teamIds.map((id) => data.teams[id]).filter((team): team is Team => Boolean(team)); const heading = tournament.status === "in_progress" || tournament.status === "active" ? "Турнир идёт" : "Подготовка турнира"; const text = `${heading}\nПодробный вид\n\n${entered.map((team) => rosterCard(data, team)).join("\n\n")}`; const stages = [...new Set(tournamentMatches(data, tournament.id).map((match) => match.stage))]; const keyboard = inlineKeyboard([[inlineButton("Открыть полную сетку", "matches:show")], ...stages.slice(0, 5).map((stage, index) => [inlineButton(stage.slice(0, 24), `matches:stage:${index}`)]), [inlineButton("В меню", "menu:main")]]); if (edit) await editTableMessage(ctx, text, keyboard); else await ctx.reply(text, { reply_markup: keyboard }); }
 composer.callbackQuery("tournament:show", async (ctx) => { await ctx.answerCallbackQuery(); await showTournament(ctx, true); });
 composer.on("message:text", async (ctx, next) => { if (view(ctx).flow !== "match_team_filter") return next(); const query = ctx.message.text.trim(); if (!query || query.length > 128) { await ctx.reply("Введите название команды до 128 символов.", { reply_markup: input }); return; } view(ctx).flow = undefined; view(ctx).matchTeamQuery = query; await showMatches(ctx, false); });
+// Old menu messages can outlive a deployment.  A removed or renamed callback
+// must still give the captain a quick, useful answer instead of an endless
+// Telegram spinner. This composer is registered last, so live callbacks above
+// always take precedence.
+composer.callbackQuery(/.+/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Эта кнопка больше не доступна. Откройте /start и выберите действие из актуального меню.");
+});
 export { formatTime, matchLine };
 export default composer;
