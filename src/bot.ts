@@ -6,7 +6,13 @@ import type { StorageAdapter } from "grammy";
 // bot grows. Durable domain data must NOT live here — use the toolkit's
 // persistent storage (see AGENTS.md).
 export interface Session {
-  // example: step?: "awaiting_amount";
+  flow?: "team_name" | "starter" | "substitute" | "edit_player" | "price" | "match_link";
+  draft?: { name: string; players: Array<{ inGameId: string; nickname: string; isSubstitute: boolean }> };
+  editingTeamId?: string;
+  editingSlot?: number;
+  managingTeamId?: string;
+  /** Harness/Node fallback only. Production records live in the tournament DO. */
+  tournamentData?: unknown;
 }
 
 export type Ctx = BotContext<Session>;

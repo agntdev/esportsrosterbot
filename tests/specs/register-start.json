@@ -7,7 +7,7 @@
           {
             "method": "sendMessage",
             "payload": {
-              "text": "Initiate team registration flow"
+              "text": "Send your team name. Send a blank message to use your Telegram name."
             }
           }
         ],
@@ -15,6 +15,19 @@
           "callback": "register:start"
         }
       }
+    ]
+  },
+  {
+    "name": "Team registration collects five starters and confirms a roster",
+    "steps": [
+      { "send": { "callback": "register:start" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Send your team name. Send a blank message to use your Telegram name." } }] },
+      { "send": { "text": "Northwind" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Starter 1 of 5: send the in-game ID and nickname as ID | nickname." } }] },
+      { "send": { "text": "n1 | Nova" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Starter 2 of 5: send the in-game ID and nickname as ID | nickname." } }] },
+      { "send": { "text": "n2 | Orbit" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Starter 3 of 5: send the in-game ID and nickname as ID | nickname." } }] },
+      { "send": { "text": "n3 | Apex" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Starter 4 of 5: send the in-game ID and nickname as ID | nickname." } }] },
+      { "send": { "text": "n4 | Vector" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Starter 5 of 5: send the in-game ID and nickname as ID | nickname." } }] },
+      { "send": { "text": "n5 | Drift" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Your five starters are set. Add up to two substitutes, or finish the roster." } }] },
+      { "send": { "callback": "register:finish" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Team Northwind is registered. Your roster is confirmed." } }] }
     ]
   }
 ]

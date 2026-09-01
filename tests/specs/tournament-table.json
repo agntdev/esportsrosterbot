@@ -1,0 +1,9 @@
+[
+  {
+    "name": "Public tables provide useful empty states",
+    "steps": [
+      { "send": { "callback": "teams:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "No teams yet — tap Register team to add the first roster." } }] },
+      { "send": { "callback": "matches:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "No confirmed teams yet — the match table will appear after registrations are approved." } }] }
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "name": "Organizer controls deny access until owner identity is configured",
+    "steps": [
+      { "send": { "callback": "admin:desk" }, "expect": [{ "method": "sendMessage", "payload": { "text": "Owner access isn't set up yet." } }] }
+    ]
+  }
+]
