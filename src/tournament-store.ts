@@ -4,6 +4,8 @@ export type Player = { inGameId: string; nickname: string; isSubstitute: boolean
 export type TeamStatus = "awaiting_payment" | "confirmed" | "pending_conflict" | "needs_correction" | "rejected";
 export type Team = {
   id: string;
+  /** Human-facing, immutable tournament number. */
+  uniqueId: number;
   name: string;
   captainTelegramId: string;
   captainContact: string;
@@ -41,13 +43,42 @@ export async function readTournament(ctx: Ctx): Promise<TournamentData> {
 
 function normalize(value: unknown): TournamentData {
   const data = value as Partial<TournamentData>;
+  const storedTeams = data.teams ?? {};
+  const ids = data.teamIds ?? [];
+  // Older records predate `uniqueId`. Assign a stable number once and persist
+  // it on the next write; explicit indexes mean this never needs a key scan.
+  const used = new Set<number>();
+  for (const id of ids) {
+    const value = storedTeams[id] as Partial<Team> | undefined;
+    if (Number.isInteger(value?.uniqueId) && (value?.uniqueId ?? 0) > 0) used.add(value!.uniqueId!);
+  }
+  let next = Math.max(data.nextTeamNumber ?? 1, ...used, 0) + (used.has(data.nextTeamNumber ?? 1) ? 1 : 0);
+  for (const id of ids) {
+    const team = storedTeams[id] as Partial<Team> | undefined;
+    if (team && (!Number.isInteger(team.uniqueId) || (team.uniqueId ?? 0) < 1)) {
+      while (used.has(next)) next += 1;
+      (team as Team).uniqueId = next;
+      used.add(next);
+      next += 1;
+    }
+  }
+  const highest = Math.max(...used, 0);
   return {
-    nextTeamNumber: data.nextTeamNumber ?? 1,
+    nextTeamNumber: Math.max(data.nextTeamNumber ?? 1, highest + 1),
     registrationPrice: data.registrationPrice ?? 0,
-    teamIds: data.teamIds ?? [],
-    teams: data.teams ?? {},
+    teamIds: ids,
+    teams: storedTeams as Record<string, Team>,
     auditEvents: data.auditEvents ?? [],
   };
+}
+
+/** Consistent identity for every user-facing team display. */
+export function teamIdentity(team: Pick<Team, "uniqueId" | "name">): string {
+  return `#${team.uniqueId} — ${team.name}`;
+}
+
+export function teamHeader(team: Pick<Team, "uniqueId" | "name">): string {
+  return `🏆 Команда ${teamIdentity(team)}`;
 }
 
 /** Keeps a small, durable audit trail without enumerating the store. */
@@ -57,15 +88,18 @@ export function logEvent(data: TournamentData, type: AuditEvent["type"], teamId:
 }
 
 export async function writeTournament(ctx: Ctx, data: TournamentData): Promise<void> {
+  // Persist migrations too: callers may have loaded legacy records before
+  // changing another tournament setting.
+  const normalized = normalize(data);
   const ns = envFor(ctx)?.CHAT_DO;
   if (ns) {
     const response = await ns.get(ns.idFromName("tournament:data")).fetch("https://do/tournament", {
-      method: "PUT", body: JSON.stringify(data),
+      method: "PUT", body: JSON.stringify(normalized),
     });
     if (!response.ok) throw new Error("Tournament records could not be saved.");
     return;
   }
-  ctx.session.tournamentData = data;
+  ctx.session.tournamentData = normalized;
 }
 
 export function teams(data: TournamentData): Team[] {

@@ -1,7 +1,7 @@
 import { Composer } from "grammy";
 import type { Ctx } from "../bot.js";
 import { adminChatId, inlineButton, inlineKeyboard, registerMainMenuItem } from "../toolkit/index.js";
-import { conflicts, readTournament, teams, writeTournament } from "../tournament-store.js";
+import { conflicts, readTournament, teamHeader, teamIdentity, teams, writeTournament } from "../tournament-store.js";
 
 registerMainMenuItem({ label: "Редактировать команду", data: "edit:team", order: 20 });
 const composer = new Composer<Ctx>();
@@ -20,7 +20,7 @@ composer.callbackQuery("edit:team", async (ctx) => {
   const mine = teams(data).find((team) => team.captainTelegramId === String(ctx.from?.id ?? "") && team.status !== "rejected");
   if (!mine) { await ctx.reply("У вас пока нет команды — зарегистрируйте заявку."); return; }
   ctx.session.editingTeamId = mine.id;
-  await ctx.reply(`Выберите игрока для изменения в команде ${mine.name}.`, { reply_markup: rosterKeyboard(mine.players.length) });
+  await ctx.reply(`Выберите игрока для изменения в команде ${teamIdentity(mine)}.`, { reply_markup: rosterKeyboard(mine.players.length) });
 });
 
 composer.callbackQuery(/^edit:slot:(\d+)$/, async (ctx) => {
@@ -52,11 +52,11 @@ composer.on("message:text", async (ctx, next) => {
     const admin = adminChatId(ctx as Ctx & { env?: Record<string, unknown> });
     const ids = team.players.filter((player) => overlap.some((other) => other.players.some((otherPlayer) => otherPlayer.inGameId.toLowerCase() === player.inGameId.toLowerCase()))).map((player) => player.inGameId).join(", ");
     if (admin) {
-      try { await ctx.api.sendMessage(admin, `Конфликт ID: ${team.name}. Команды: ${overlap.map((other) => other.name).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить эту", `conf:new:${team.id}`), inlineButton("Оставить прежнюю", `conf:old:${team.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
+      try { await ctx.api.sendMessage(admin, `${teamHeader(team)}\nКонфликт ID с: ${overlap.map((other) => teamIdentity(other)).join(", ")}. ID: ${ids}.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить эту", `conf:new:${team.id}`), inlineButton("Оставить прежнюю", `conf:old:${team.id}`)]]) }); } catch { /* Заявка остаётся доступной для проверки. */ }
     }
   }
   ctx.session.flow = undefined; ctx.session.editingSlot = undefined;
-  await ctx.reply(overlap.length ? "Состав обновлён и ожидает проверки конфликта ID." : `Состав команды ${team.name} обновлён.`, { reply_markup: inlineKeyboard([[inlineButton("Изменить ещё", "edit:team"), inlineButton("Таблица матчей", "matches:show")]]) });
+  await ctx.reply(overlap.length ? "Состав обновлён и ожидает проверки конфликта ID." : `Состав команды ${teamIdentity(team)} обновлён.`, { reply_markup: inlineKeyboard([[inlineButton("Изменить ещё", "edit:team"), inlineButton("Таблица матчей", "matches:show")]]) });
 });
 
 export default composer;
