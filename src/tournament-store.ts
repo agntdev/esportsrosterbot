@@ -78,7 +78,7 @@ export function teamIdentity(team: Pick<Team, "uniqueId" | "name">): string {
 }
 
 export function teamHeader(team: Pick<Team, "uniqueId" | "name">): string {
-  return `🏆 Команда ${teamIdentity(team)}`;
+  return `🏆 Team ${teamIdentity(team)}`;
 }
 
 /** Keeps a small, durable audit trail without enumerating the store. */
