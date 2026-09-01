@@ -41,6 +41,13 @@ composer.use(async (ctx, next) => {
         return true as never;
       }
     };
+
+    // Acknowledge before any storage read or permission check. Telegram only
+    // allows a callback acknowledgement for a short window; when an update is
+    // delayed, acknowledging at the end made the button look dead and invited
+    // repeated taps. Handlers may still acknowledge explicitly -- the wrapper
+    // above makes that harmless, including for a late duplicate delivery.
+    await ctx.answerCallbackQuery();
   }
   return next();
 });
