@@ -130,7 +130,7 @@ async function acceptName(ctx: Ctx, value: string, afterName: "starter_id" | "pr
   const existing = duplicateName(await readTournament(ctx), draft.name);
   if (existing) {
     session(ctx).flow = "duplicate_name";
-    await ctx.reply(`⚠️ Team ${teamIdentity(existing)} is already registered.\nYou can keep this name or choose another.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить название", "register:name:keep"), inlineButton("Выбрать другое название", "register:name:change")]]) });
+    await ctx.reply(`⚠️ ${teamIdentity(existing)} уже зарегистрирована.\nВы можете оставить это название или выбрать другое.`, { reply_markup: inlineKeyboard([[inlineButton("Оставить название", "register:name:keep"), inlineButton("Выбрать другое название", "register:name:change")]]) });
     return;
   }
   if (afterName === "starter_id") {
