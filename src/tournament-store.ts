@@ -23,11 +23,27 @@ export type Team = {
 export type NameSubject = "team" | "player";
 export type NameReview = { id: string; requestedBy: string; candidate: string; subject: NameSubject; status: "pending" | "approved" | "rejected" };
 export type Tournament = { id: string; teamIds: string[]; createdAt: number; createdBy: string; status: "active" };
+export type MatchStatus = "scheduled" | "completed";
+/** A pairing is stored once, rather than duplicated on each team. */
+export type MatchTable = {
+  id: string;
+  number: number;
+  tournamentId: string;
+  stage: string;
+  team1Id: string;
+  team2Id?: string;
+  scheduledTime?: number;
+  timezone: string;
+  serverLink?: string;
+  status: MatchStatus;
+  result?: string;
+  winnerTeamId?: string;
+};
 export type AuditEvent = { at: number; type: "team_created" | "admin_notified" | "name_review_requested" | "name_override_approved" | "name_override_rejected" | "tournament_created" | "conflict_resolved"; teamId?: string; reviewId?: string; tournamentId?: string; adminId?: string; resolution?: "team1" | "team2" | "both"; relatedTeamIds?: string[] };
-export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[] };
+export type TournamentData = { nextTeamNumber: number; registrationPrice: number; teamIds: string[]; teams: Record<string, Team>; auditEvents: AuditEvent[]; nextNameReviewNumber: number; nameReviews: Record<string, NameReview>; nameReviewIds: string[]; nameOverrides: Array<{ normalized: string; subject: NameSubject }>; nextTournamentNumber: number; tournaments: Record<string, Tournament>; tournamentIds: string[]; nextMatchNumber: number; matches: Record<string, MatchTable>; matchIds: string[] };
 export type RosterSlotUpdate = { teamId: string; slot: number; player?: Player };
 
-const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [] });
+const initial = (): TournamentData => ({ nextTeamNumber: 1, registrationPrice: 0, teamIds: [], teams: {}, auditEvents: [], nextNameReviewNumber: 1, nameReviews: {}, nameReviewIds: [], nameOverrides: [], nextTournamentNumber: 1, tournaments: {}, tournamentIds: [], nextMatchNumber: 1, matches: {}, matchIds: [] });
 let clock: () => number = () => Date.now();
 
 /** Single injectable clock seam for generated default names and future cutoffs. */
@@ -72,6 +88,21 @@ function normalize(value: unknown): TournamentData {
     }
   }
   const highest = Math.max(...used, 0);
+  const storedMatches = data.matches ?? {};
+  const storedMatchIds = data.matchIds ?? [];
+  let nextMatchNumber = data.nextMatchNumber ?? 1;
+  for (const matchId of storedMatchIds) nextMatchNumber = Math.max(nextMatchNumber, (storedMatches[matchId]?.number ?? 0) + 1);
+  // Migration for tournaments created before pairings were introduced.  The
+  // explicit tournament team index lets this be deterministic without a scan.
+  for (const tournamentId of data.tournamentIds ?? []) {
+    const tournament = data.tournaments?.[tournamentId];
+    if (!tournament || storedMatchIds.some((matchId) => storedMatches[matchId]?.tournamentId === tournamentId)) continue;
+    for (let index = 0; index < tournament.teamIds.length; index += 2) {
+      const number = nextMatchNumber++;
+      const match: MatchTable = { id: `m${number}`, number, tournamentId, stage: "Основной этап", team1Id: tournament.teamIds[index], team2Id: tournament.teamIds[index + 1], timezone: "Europe/Moscow", status: "scheduled" };
+      storedMatchIds.push(match.id); storedMatches[match.id] = match;
+    }
+  }
   return {
     nextTeamNumber: Math.max(data.nextTeamNumber ?? 1, highest + 1),
     registrationPrice: data.registrationPrice ?? 0,
@@ -85,6 +116,9 @@ function normalize(value: unknown): TournamentData {
     nextTournamentNumber: data.nextTournamentNumber ?? 1,
     tournaments: data.tournaments ?? {},
     tournamentIds: data.tournamentIds ?? [],
+    nextMatchNumber,
+    matches: storedMatches,
+    matchIds: storedMatchIds,
   };
 }
 
@@ -192,9 +226,48 @@ export function createTournament(data: TournamentData, selected: Team[], adminId
     team.rosterLocked = true;
     team.matchStatus = "pending";
   }
+  // Pair teams in their stable registration order. An unpaired team is shown
+  // as a bye, never silently dropped from the public table.
+  for (let index = 0; index < selected.length; index += 2) {
+    const number = data.nextMatchNumber++;
+    const match: MatchTable = {
+      id: `m${number}`,
+      number,
+      tournamentId: id,
+      stage: "Основной этап",
+      team1Id: selected[index].id,
+      team2Id: selected[index + 1]?.id,
+      timezone: "Europe/Moscow",
+      status: "scheduled",
+    };
+    data.matchIds.push(match.id);
+    data.matches[match.id] = match;
+  }
   data.auditEvents.push({ at: tournament.createdAt, type: "tournament_created", tournamentId: id, adminId });
   if (data.auditEvents.length > 200) data.auditEvents.splice(0, data.auditEvents.length - 200);
   return tournament;
+}
+
+export function tournamentMatches(data: TournamentData, tournamentId?: string): MatchTable[] {
+  return data.matchIds.map((id) => data.matches[id]).filter((match): match is MatchTable => Boolean(match) && (!tournamentId || match.tournamentId === tournamentId));
+}
+
+export function captainIdentifier(team: Team): string {
+  const contact = team.captainContact?.trim();
+  return contact?.startsWith("@") ? contact : `id${team.captainTelegramId}`;
+}
+
+export function matchExportRows(data: TournamentData, tournamentId?: string): Array<Record<string, string | number>> {
+  return tournamentMatches(data, tournamentId).map((match) => {
+    const team1 = data.teams[match.team1Id]; const team2 = match.team2Id ? data.teams[match.team2Id] : undefined;
+    return { team1_name: team1?.name ?? "", team1_captain_id: team1?.captainTelegramId ?? "", team2_name: team2?.name ?? "", team2_captain_id: team2?.captainTelegramId ?? "", scheduled_time: match.scheduledTime ?? "", timezone: match.timezone, status: match.status, result: match.result ?? "" };
+  });
+}
+
+export function matchExportCsv(data: TournamentData, tournamentId?: string): string {
+  const fields = ["team1_name", "team1_captain_id", "team2_name", "team2_captain_id", "scheduled_time", "timezone", "status", "result"];
+  const quote = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+  return [fields.join(","), ...matchExportRows(data, tournamentId).map((row) => fields.map((field) => quote(row[field] ?? "")).join(","))].join("\n");
 }
 
 export function conflicts(data: TournamentData, team: Team): Team[] {

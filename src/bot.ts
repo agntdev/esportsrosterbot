@@ -13,11 +13,12 @@ import tournamentTable from "./handlers/tournament-table.js";
 // bot grows. Durable domain data must NOT live here — use the toolkit's
 // persistent storage (see AGENTS.md).
 export interface Session {
-  flow?: "team_name" | "starter" | "substitute" | "edit_player" | "price" | "match_link";
+  flow?: "team_name" | "starter" | "substitute" | "edit_player" | "price" | "match_link" | "match_time" | "match_team_filter";
   draft?: { name: string; players: Array<{ inGameId: string; nickname: string; isSubstitute: boolean }> };
   editingTeamId?: string;
   editingSlot?: number;
   managingTeamId?: string;
+  managingMatchId?: string;
   /** Harness/Node fallback only. Production records live in the tournament DO. */
   tournamentData?: unknown;
 }

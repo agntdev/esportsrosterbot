@@ -1,4 +1,4 @@
 [
-  { "name": "Публичные таблицы показывают пустое состояние", "steps": [{ "send": { "callback": "teams:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Команд пока нет — зарегистрируйте первую заявку." } }] }, { "send": { "callback": "matches:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Подтверждённых команд пока нет — таблица появится после регистрации." } }] }] },
+  { "name": "Публичные таблицы показывают пустое состояние", "steps": [{ "send": { "callback": "teams:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Команд пока нет — зарегистрируйте первую заявку." } }] }, { "send": { "callback": "matches:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Турнир ещё не составлен — таблица появится после решения организатора." } }] }] },
   { "name": "Подготовка турнира сообщает, когда состав ещё не опубликован", "steps": [{ "send": { "callback": "tournament:show" }, "expect": [{ "method": "editMessageText", "payload": { "text": "Турнир ещё не составлен — таблица появится после решения организатора." } }] }] }
 ]
