@@ -80,7 +80,7 @@ function normalize(value: unknown): TournamentData {
 
 /** Consistent identity for every user-facing team display. */
 export function teamIdentity(team: Pick<Team, "uniqueId" | "name">): string {
-  return `🏆 Team #${team.uniqueId} — ${team.name}`;
+  return `🏆 Команда #${team.uniqueId} — ${team.name}`;
 }
 
 export function teamHeader(team: Pick<Team, "uniqueId" | "name">): string {
