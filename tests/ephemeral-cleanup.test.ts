@@ -42,7 +42,7 @@ describe("ephemeral form-message cleanup", () => {
     const { bot, calls } = await trackedBot();
     await bot.handleUpdate(callbackUpdate(1, 1));
     await bot.handleUpdate(textUpdate(1, 1, 2, "Northwind"));
-    expect(calls.some((call) => call.method === "sendMessage" && call.payload.text === "Капитан — Game ID.")).toBe(true);
+    expect(calls.some((call) => call.method === "sendMessage" && call.payload.text === "Капитан — игровой ID.")).toBe(true);
     expect(calls.some((call) => call.method === "deleteMessage" && call.payload.chat_id === 1 && call.payload.message_id === 2)).toBe(true);
   });
 
@@ -52,7 +52,7 @@ describe("ephemeral form-message cleanup", () => {
     await bot.handleUpdate(callbackUpdate(-100, 7));
     await bot.handleUpdate(textUpdate(-100, 7, 2, "Northwind"));
     expect(calls.some((call) => call.method === "deleteMessage" && call.payload.chat_id === -100 && call.payload.message_id === 2)).toBe(true);
-    expect(calls.some((call) => call.method === "sendMessage" && call.payload.text === "Капитан — Game ID.")).toBe(true);
+    expect(calls.some((call) => call.method === "sendMessage" && call.payload.text === "Капитан — игровой ID.")).toBe(true);
     expect(error).toHaveBeenCalled();
     error.mockRestore();
   });

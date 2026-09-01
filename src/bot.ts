@@ -77,7 +77,7 @@ export function buildBot(token: string, opts: BuildBotOptions = {}) {
   ];
   for (const h of handlers) bot.use(h);
 
-  bot.on("message", (ctx) => ctx.reply("Sorry, I didn't understand that. Try /help."));
+  bot.on("message", (ctx) => ctx.reply("Не удалось распознать сообщение. Откройте /help."));
 
   return bot;
 }

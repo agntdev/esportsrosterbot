@@ -10,7 +10,7 @@ const input = { force_reply: true, input_field_placeholder: "Введите зн
 async function owner(ctx: Ctx): Promise<boolean> { if (isOwner(ctx)) { await ctx.answerCallbackQuery(); return true; } return requireOwner(ctx as never); }
 function deskKeyboard() { return inlineKeyboard([[inlineButton("Установить цену регистрации", "admin:price")], [inlineButton("Разрешить конфликты", "admin:conflicts")], [inlineButton("Проверить запросы никнеймов", "admin:names")], [inlineButton("Управлять матчами", "admin:matches")], [inlineButton("Составить турнир", "admin:tournament:compose")], [inlineButton("В меню", "menu:main")]]); }
 function tournamentPreview(data: Awaited<ReturnType<typeof readTournament>>, list: Team[]): string {
-  return `Tournament Preparation\nClean view: ON\n\n${list.map((team) => rosterCard(data, team)).join("\n\n")}`;
+  return `Подготовка турнира\nПодробный вид: включён\n\n${list.map((team) => rosterCard(data, team)).join("\n\n")}`;
 }
 
 composer.callbackQuery("admin:desk", async (ctx) => { if (!(await owner(ctx))) return; await ctx.reply("Управляйте регистрациями, конфликтами и матчами.", { reply_markup: deskKeyboard() }); });
@@ -95,7 +95,7 @@ composer.callbackQuery(/^admin:conf:(t\d+)$/, async (ctx) => {
   if (!team) { await ctx.reply("Эта команда больше недоступна."); return; }
   const other = conflicts(data, team)[0];
   if (!other) { await ctx.reply(`${teamHeader(team)} больше не имеет конфликта состава.`, { reply_markup: deskKeyboard() }); return; }
-  await ctx.reply(`${teamHeader(team)} конфликтует с ${teamIdentity(other)}.\n\nКоманда 1 — эта заявка. Команда 2 — конфликтующая заявка. Назначение одной команде потребует правок от другой; «Оставить обеим» намеренно разрешает одинаковый Game ID.`, { reply_markup: conflictChoices(team, other) });
+  await ctx.reply(`${teamHeader(team)} конфликтует с ${teamIdentity(other)}.\n\nКоманда 1 — эта заявка. Команда 2 — конфликтующая заявка. Назначение одной команде потребует правок от другой; «Оставить обеим» намеренно разрешает одинаковый игровой ID.`, { reply_markup: conflictChoices(team, other) });
 });
 composer.callbackQuery(/^conf:choose:(team1|team2|both):(t\d+)$/, async (ctx) => {
   if (!(await owner(ctx))) return;

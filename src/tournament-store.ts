@@ -149,7 +149,7 @@ export function applyRosterSlotUpdate(data: TournamentData, update: RosterSlotUp
     const id = player.inGameId.trim().toLocaleLowerCase();
     if (!id || !player.nickname.trim()) throw new Error("Player details are incomplete.");
     if (team.players.some((current, index) => index !== update.slot && current.inGameId.trim().toLocaleLowerCase() === id)) {
-      throw new Error("This Game ID is already on the roster.");
+      throw new Error("Игровой ID уже есть в составе.");
     }
     // Assign rather than splice: slot 0 remains slot 0 for every replacement.
     team.players[update.slot] = { inGameId: player.inGameId.trim(), nickname: player.nickname.trim(), isSubstitute: update.slot >= 5 };
